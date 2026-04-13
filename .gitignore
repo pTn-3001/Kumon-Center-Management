@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local temporary files
+.tmp/
+.tmp_*.js
+
+# Runtime/generated local data
+docker-data/
+temp/
+certificates/
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.vscode/

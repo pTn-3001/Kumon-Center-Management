@@ -1,0 +1,451 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubjectCode {
+  MATH
+  EFL
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StudentStatus {
+  OFFICIAL
+  DROPPED
+  TRIAL
+  EXPIRED
+}
+
+enum EnrollmentType {
+  TWICE_WEEKLY
+  DAILY
+}
+
+enum RegistrationType {
+  OFFICIAL
+  TRIAL
+}
+
+enum Weekday {
+  T2
+  T3
+  T4
+  T5
+  T6
+  T7
+}
+
+enum ClassShift {
+  SHIFT_1
+  SHIFT_2
+  SHIFT_3
+  SHIFT_4
+  SHIFT_5
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  SCHEDULED
+  ATTENDED
+  CONVERTED
+  LOST
+}
+
+enum LeadSource {
+  FACEBOOK
+  REFERRAL
+  TIKTOK
+  WALK_IN
+}
+
+enum AppointmentStatus {
+  WAITING
+  DONE
+  RESCHEDULED
+  CANCELED
+}
+
+enum FinanceType {
+  SALARY
+  RENT
+  SUPPLIES
+  MARKETING
+  UTILITIES
+  DEPRECIATION
+  OTHER
+}
+
+enum StaffRole {
+  ADMIN
+  TEACHER
+  ASSISTANT
+  CONSULTANT
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+enum WorksheetMode {
+  INPUT
+  USE
+  STOCK
+}
+
+enum CertificateSize {
+  SMALL
+  LARGE
+}
+
+model Center {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique
+  name      String
+  phone     String?
+  address   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  students     Student[]
+  leads        Lead[]
+  staffs       Staff[]
+  financeItems  Finance[]
+  classGroups   ClassGroup[]
+  certificates  CertificateRecord[]
+  personalSchedules PersonalSchedule[]
+  notifications Notification[]
+}
+
+model Student {
+  id              Int           @id @default(autoincrement())
+  centerId        Int
+  fullName        String
+  birthDate       DateTime?
+  gender          Gender
+  admissionDate   DateTime
+  fatherFullName  String        @default("Chưa cập nhật")
+  fatherPhone     String        @default("Chưa cập nhật")
+  motherFullName  String        @default("Chưa cập nhật")
+  motherPhone     String        @default("Chưa cập nhật")
+  address         String        @default("Chưa cập nhật")
+  status          StudentStatus @default(OFFICIAL)
+  reportB         Boolean       @default(false)
+  reportBDate     DateTime?
+  leaveProofImage String?
+  assignedStaffId Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  center         Center          @relation(fields: [centerId], references: [id])
+  assignedStaff   Staff?          @relation(fields: [assignedStaffId], references: [id])
+  enrollments     Enrollment[]
+  assessments     AssessmentRecord[]
+  attendances     Attendance[]
+  worksheetUsage  WorksheetUsage[]
+  personalSchedules PersonalSchedule[]
+  leadsConverted  Lead[]          @relation("LeadConvertedStudent")
+  certificates    CertificateRecord[]
+  leaves          StudentLeave[]
+
+  @@index([centerId, status])
+}
+
+model Subject {
+  id      Int         @id @default(autoincrement())
+  code    SubjectCode @unique
+  label   String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Enrollment {
+  id               Int              @id @default(autoincrement())
+  studentId        Int
+  classGroupId     Int?
+  subjectCode      SubjectCode
+  registrationType RegistrationType
+  enrollmentType   EnrollmentType
+  studyDays        String
+  classShift       ClassShift
+  currentLevel     String?
+  startDate        DateTime
+  endDate          DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+  classGroup ClassGroup? @relation(fields: [classGroupId], references: [id])
+
+  @@unique([studentId, subjectCode])
+  @@index([classGroupId])
+}
+
+model Lead {
+  id                  Int          @id @default(autoincrement())
+  centerId            Int
+  fullName            String
+  phone               String
+  parentName          String?
+  status              LeadStatus   @default(NEW)
+  source              LeadSource
+  preferredSubjects   String[]
+  note                String?
+  convertedStudentId  Int?         @unique
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  center              Center       @relation(fields: [centerId], references: [id])
+  convertedStudent    Student?     @relation("LeadConvertedStudent", fields: [convertedStudentId], references: [id])
+  appointments        Appointment[]
+
+  @@index([centerId, status])
+}
+
+model Appointment {
+  id          Int                @id @default(autoincrement())
+  leadId      Int
+  scheduledAt DateTime
+  status      AppointmentStatus  @default(WAITING)
+  note        String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id])
+}
+
+model Finance {
+  id          Int          @id @default(autoincrement())
+  centerId    Int
+  type        FinanceType
+  amount      Decimal      @db.Decimal(14, 0)
+  spentAt     DateTime
+  proofImage  String?
+  note        String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  center Center @relation(fields: [centerId], references: [id])
+}
+
+model Staff {
+  id            Int        @id @default(autoincrement())
+  centerId      Int
+  fullName      String
+  username      String?    @unique
+  email         String?    @unique
+  phone         String?
+  role          StaffRole
+  employmentType EmploymentType @default(FULL_TIME)
+  joinDate      DateTime?
+  contractEndDate DateTime?
+  salary        Decimal    @db.Decimal(14, 0)
+  hourlyRate    Decimal?   @db.Decimal(14, 0)
+  leaveDate     DateTime?
+  passwordHash  String?
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  center      Center      @relation(fields: [centerId], references: [id])
+  students    Student[]
+  classGroups ClassGroup[]
+  leaveDays   StaffLeave[]
+  timeEntries StaffTimeEntry[]
+  notificationReads NotificationRead[]
+}
+
+model StaffTimeEntry {
+  id        Int      @id @default(autoincrement())
+  staffId   Int
+  workDate  DateTime
+  clockIn   DateTime
+  clockOut  DateTime?
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, workDate])
+}
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  centerId    Int
+  type        String
+  title       String
+  message     String
+  targetRoles String[] @default([])
+  eventKey    String?  @unique
+  createdAt   DateTime @default(now())
+
+  center Center @relation(fields: [centerId], references: [id])
+  reads  NotificationRead[]
+
+  @@index([centerId, createdAt])
+}
+
+model NotificationRead {
+  id             Int      @id @default(autoincrement())
+  notificationId Int
+  staffId        Int
+  readAt         DateTime @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, staffId])
+  @@index([staffId, readAt])
+}
+
+model StaffLeave {
+  id        Int      @id @default(autoincrement())
+  staffId   Int
+  leaveDate DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, leaveDate])
+  @@index([leaveDate])
+}
+
+model ClassGroup {
+  id          Int        @id @default(autoincrement())
+  centerId    Int
+  subjectCode SubjectCode
+  weekday     Weekday
+  classShift  ClassShift
+  label       String
+  teacherId   Int?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  center   Center   @relation(fields: [centerId], references: [id])
+  teacher  Staff?   @relation(fields: [teacherId], references: [id])
+  attendances Attendance[]
+  enrollments Enrollment[]
+}
+
+model Attendance {
+  id                Int              @id @default(autoincrement())
+  classGroupId      Int
+  studentId         Int
+  date              DateTime
+  status            AttendanceStatus
+  makeUpClassGroupId Int?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  classGroup        ClassGroup       @relation(fields: [classGroupId], references: [id])
+  student           Student          @relation(fields: [studentId], references: [id])
+}
+
+model StudentLeave {
+  id          Int      @id @default(autoincrement())
+  studentId   Int
+  reason      String?
+  proofImage  String?
+  startedAt   DateTime
+  endedAt     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+}
+
+model AssessmentRecord {
+  id              Int        @id @default(autoincrement())
+  studentId       Int
+  subjectCode     SubjectCode
+  level           String
+  correctAnswers  Int
+  totalQuestions  Int
+  actualMinutes   Int
+  standardMinutes Int
+  groupNo         Int
+  testDate        DateTime
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  student Student @relation(fields: [studentId], references: [id])
+}
+
+model PersonalSchedule {
+  id          Int        @id @default(autoincrement())
+  centerId    Int
+  studentId   Int
+  subjectCode SubjectCode
+  scheduledAt DateTime
+  classShift  ClassShift
+  note        String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  center  Center  @relation(fields: [centerId], references: [id])
+  student Student @relation(fields: [studentId], references: [id])
+}
+
+model WorksheetBatch {
+  id          Int        @id @default(autoincrement())
+  centerId    Int
+  subjectCode SubjectCode
+  level       String
+  codeRange   String
+  quantity    Int
+  receivedAt  DateTime
+  note        String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  usages      WorksheetUsage[]
+}
+
+model WorksheetUsage {
+  id          Int      @id @default(autoincrement())
+  batchId     Int
+  studentId   Int?
+  quantity    Int
+  usedAt      DateTime
+  preparedBy  String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  batch   WorksheetBatch @relation(fields: [batchId], references: [id])
+  student Student?       @relation(fields: [studentId], references: [id])
+}
+
+model CertificateRecord {
+  id          Int            @id @default(autoincrement())
+  centerId    Int
+  studentId   Int?
+  studentName String
+  subjectCode SubjectCode
+  size        CertificateSize
+  level       String?
+  receivedAt  DateTime
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  center Center @relation(fields: [centerId], references: [id])
+  student Student? @relation(fields: [studentId], references: [id])
+}

@@ -1,0 +1,1983 @@
+"use client";
+
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { addYears, differenceInCalendarDays, parseISO, startOfDay } from 'date-fns';
+import { useSearchParams } from 'next/navigation';
+import { createPortal } from 'react-dom';
+import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { HoverTooltip } from '@/components/ui/hover-tooltip';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { MetricCard } from '@/components/dashboard/metric-card';
+import { cn, formatCurrency, formatDate } from '@/lib/utils';
+import { formatClassShiftByWeekday } from '@/lib/kumon';
+import type { ClassShift, Gender, StudentStatus, SubjectCode, Weekday } from '@/types';
+
+type ApiStudent = {
+  id: number;
+  centerId: number;
+  fullName: string;
+  birthDate: string | null;
+  gender: Gender;
+  admissionDate: string;
+  fatherFullName: string;
+  fatherPhone: string;
+  motherFullName: string;
+  motherPhone: string;
+  parentName: string;
+  parentPhone: string;
+  address: string;
+  status: StudentStatus;
+  reportBDate: string | null;
+  assignedStaffId: number | null;
+  assignedStaffName: string | null;
+  enrollments: Array<{
+    id: number;
+    subjectCode: 'MATH' | 'EFL';
+    registrationType: string;
+    enrollmentType: string;
+    currentLevel: string | null;
+    studyDays: string;
+    classShift: 'Ca 1' | 'Ca 2' | 'Ca 3' | 'Ca 4' | 'Ca 5';
+    startDate: string;
+    endDate: string | null;
+    classGroup: { id: number; label: string; weekday: string; classShift: string } | null;
+  }>;
+};
+
+type ApiClassGroup = {
+  id: number;
+  subjectCode: SubjectCode;
+  classShift: string;
+  weekday: Weekday;
+  label: string;
+};
+
+type ApiFinanceItem = {
+  id: number;
+  centerId: number;
+  type: string;
+  amount: number;
+  spentAt: string;
+  proofImage: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ApiLeadPrefill = {
+  id: number;
+  fullName: string;
+  parentPhone: string;
+  parentName: string;
+  preferredSubjects: SubjectCode[];
+};
+
+type StudentTab = 'hoc-vien' | 'hoc-thu' | 'nghi-hoc' | 'sinh-nhat' | 'chua-thu-hoc-phi' | 'nhap-hoc';
+type BirthdayFilter = 'all' | '7-days' | 'after-7-days' | 'passed';
+type TrialStatusFilter = typeof STATUS_TRIAL | typeof STATUS_EXPIRED;
+type TuitionStatusFilter = 'all' | 'unpaid' | 'paid';
+type AdmissionRegistrationType = 'Chinh thuc' | 'Hoc thu';
+type IntakeSource = 'transfer' | 'new';
+type ShiftOption = 'Ca 1' | 'Ca 2' | 'Ca 3' | 'Ca 4' | 'Ca 5';
+type PaymentMethod = 'Tiền mặt' | 'Chuyển khoản';
+
+type SubjectAssignmentValue = {
+  enrollmentId: number;
+  registrationType: string;
+  enrollmentType: string;
+  startDate: string;
+  selectedWeekdays: Weekday[];
+  shiftsByWeekday: Partial<Record<Weekday, ShiftOption>>;
+};
+
+const STATUS_OFFICIAL = 'Ch\u00ednh th\u1ee9c' as StudentStatus;
+const STATUS_DROPPED = 'Th\u00f4i h\u1ecdc' as StudentStatus;
+const STATUS_TRIAL = 'H\u1ecdc th\u1eed' as StudentStatus;
+const STATUS_EXPIRED = 'H\u1ebft h\u1ea1n' as StudentStatus;
+
+const GENDER_MALE = 'Nam' as Gender;
+const GENDER_FEMALE = 'N\u1eef' as Gender;
+const GENDER_OTHER = 'Kh\u00e1c' as Gender;
+
+const birthdayFilters: BirthdayFilter[] = ['all', '7-days', 'after-7-days', 'passed'];
+const studentTabs: StudentTab[] = ['hoc-vien', 'hoc-thu', 'nghi-hoc', 'sinh-nhat', 'chua-thu-hoc-phi', 'nhap-hoc'];
+const SHIFT_OPTIONS: ShiftOption[] = ['Ca 1', 'Ca 2', 'Ca 3', 'Ca 4', 'Ca 5'];
+const SUBJECT_OPTIONS: SubjectCode[] = ['MATH', 'EFL'];
+const TUITION_NOTE_PREFIX = '[TUITION]';
+const TUITION_PER_SUBJECT_PER_MONTH = 1500000;
+const FIXED_CLASSES: Array<{ subjectCode: SubjectCode; weekday: Weekday; name: string }> = [
+  { subjectCode: 'MATH', weekday: 'T2', name: 'Toán - Thứ Hai' },
+  { subjectCode: 'MATH', weekday: 'T3', name: 'Toán - Thứ Ba' },
+  { subjectCode: 'MATH', weekday: 'T4', name: 'Toán - Thứ Tư' },
+  { subjectCode: 'MATH', weekday: 'T5', name: 'Toán - Thứ Năm' },
+  { subjectCode: 'MATH', weekday: 'T6', name: 'Toán - Thứ Sáu' },
+  { subjectCode: 'MATH', weekday: 'T7', name: 'Toán - Thứ Bảy' },
+  { subjectCode: 'EFL', weekday: 'T2', name: 'Tiếng Anh - Thứ Hai' },
+  { subjectCode: 'EFL', weekday: 'T3', name: 'Tiếng Anh - Thứ Ba' },
+  { subjectCode: 'EFL', weekday: 'T4', name: 'Tiếng Anh - Thứ Tư' },
+  { subjectCode: 'EFL', weekday: 'T5', name: 'Tiếng Anh - Thứ Năm' },
+  { subjectCode: 'EFL', weekday: 'T6', name: 'Tiếng Anh - Thứ Sáu' },
+  { subjectCode: 'EFL', weekday: 'T7', name: 'Tiếng Anh - Thứ Bảy' },
+];
+
+const emptyForm = {
+  fullName: '',
+  birthDate: '',
+  gender: GENDER_MALE,
+  admissionDate: new Date().toISOString().slice(0, 10),
+  fatherFullName: '',
+  fatherPhone: '',
+  motherFullName: '',
+  motherPhone: '',
+  address: '',
+  status: STATUS_OFFICIAL,
+  assignedStaffId: '',
+};
+
+function getBirthdayInfo(birthDate: string) {
+  const today = new Date();
+  const birth = parseISO(birthDate);
+  const birthdayThisYear = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+  const passed = birthdayThisYear < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const nextBirthday = passed ? addYears(birthdayThisYear, 1) : birthdayThisYear;
+  const daysUntil = differenceInCalendarDays(nextBirthday, today);
+  return { daysUntil, passed };
+}
+
+function getSubjectBadge(subjectCode: 'MATH' | 'EFL') {
+  return (
+    <span
+      className={cn(
+        'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold tracking-wide',
+        subjectCode === 'EFL'
+          ? 'bg-[#f08900]/15 text-[#f08900] ring-1 ring-inset ring-[#f08900]/35'
+          : 'bg-[#7ecdf4]/20 text-[#2e8db7] ring-1 ring-inset ring-[#7ecdf4]/45'
+      )}
+    >
+      {subjectCode}
+    </span>
+  );
+}
+
+function parseSerializedStudyDays(studyDays: string, fallbackShift: ShiftOption): Array<{ weekday: Weekday; shift: ShiftOption }> {
+  const result: Array<{ weekday: Weekday; shift: ShiftOption }> = [];
+  const serializedMatches = Array.from(studyDays.matchAll(/(T[2-7])\s*\((Ca\s[1-5])\)/g));
+
+  if (serializedMatches.length > 0) {
+    serializedMatches.forEach((match) => {
+      result.push({ weekday: match[1] as Weekday, shift: match[2] as ShiftOption });
+    });
+    return result;
+  }
+
+  const plainWeekdays = Array.from(new Set((studyDays.match(/T[2-7]/g) ?? []) as Weekday[]));
+  plainWeekdays.forEach((weekday) => {
+    result.push({ weekday, shift: fallbackShift });
+  });
+  return result;
+}
+
+function StudentsPageContent() {
+  const searchParams = useSearchParams();
+
+  const [students, setStudents] = useState<ApiStudent[]>([]);
+  const [classGroups, setClassGroups] = useState<ApiClassGroup[]>([]);
+  const [financeItems, setFinanceItems] = useState<ApiFinanceItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [search, setSearch] = useState('');
+  const [trialStatusFilter, setTrialStatusFilter] = useState<TrialStatusFilter>(STATUS_TRIAL);
+  const [tuitionStatusFilter, setTuitionStatusFilter] = useState<TuitionStatusFilter>('all');
+  const [reportBMonthFilter, setReportBMonthFilter] = useState<string>('all');
+  const [reportBYearFilter, setReportBYearFilter] = useState<string>('all');
+
+  const [birthdayFilter, setBirthdayFilter] = useState<BirthdayFilter>('all');
+  const [tuitionMonthFilter, setTuitionMonthFilter] = useState(String(new Date().getMonth() + 1));
+  const [tuitionYearFilter, setTuitionYearFilter] = useState(String(new Date().getFullYear()));
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingStudentId, setEditingStudentId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState({
+    fullName: '',
+    birthDate: '',
+    gender: GENDER_MALE as Gender,
+    admissionDate: new Date().toISOString().slice(0, 10),
+    reportBDate: '',
+    fatherFullName: '',
+    fatherPhone: '',
+    motherFullName: '',
+    motherPhone: '',
+    address: '',
+  });
+  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
+  const [selectedSubjects, setSelectedSubjects] = useState<SubjectCode[]>(['MATH']);
+  const [admissionRegistrationType, setAdmissionRegistrationType] = useState<AdmissionRegistrationType>('Chinh thuc');
+  const [officialIntakeSource, setOfficialIntakeSource] = useState<IntakeSource>('new');
+  const [admissionFeePaid, setAdmissionFeePaid] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assigningStudent, setAssigningStudent] = useState<ApiStudent | null>(null);
+  const [assignmentValues, setAssignmentValues] = useState<Partial<Record<SubjectCode, SubjectAssignmentValue>>>({});
+  const [savingAssign, setSavingAssign] = useState(false);
+
+  const [dropoutOpen, setDropoutOpen] = useState(false);
+  const [dropoutStudent, setDropoutStudent] = useState<ApiStudent | null>(null);
+  const [dropoutDate, setDropoutDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dropoutMode, setDropoutMode] = useState<'all' | 'subjects'>('all');
+  const [dropoutSubject, setDropoutSubject] = useState<SubjectCode>('MATH');
+  const [dropoutEnrollmentIds, setDropoutEnrollmentIds] = useState<number[]>([]);
+
+  const [reenrollOpen, setReenrollOpen] = useState(false);
+  const [reenrollStudent, setReenrollStudent] = useState<ApiStudent | null>(null);
+  const [reenrollDate, setReenrollDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reenrollSubject, setReenrollSubject] = useState<SubjectCode>('MATH');
+  const [tuitionDialogOpen, setTuitionDialogOpen] = useState(false);
+  const [tuitionStudent, setTuitionStudent] = useState<ApiStudent | null>(null);
+  const [selectedPaymentMonths, setSelectedPaymentMonths] = useState<string[]>([]);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Tiền mặt');
+  const [prefilledLeadId, setPrefilledLeadId] = useState<number | null>(null);
+  const [portalReady, setPortalReady] = useState(false);
+
+  const autoExpiredTrialRef = useRef<Set<number>>(new Set());
+
+  const activeTabFromQuery = searchParams.get('tab');
+  const leadIdFromQuery = Number(searchParams.get('leadId') ?? '');
+  const currentTab: StudentTab = studentTabs.includes(activeTabFromQuery as StudentTab) ? (activeTabFromQuery as StudentTab) : 'hoc-vien';
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [studentsRes, classesRes, financeRes] = await Promise.all([
+          fetch('/api/hoc-vien', { cache: 'no-store' }),
+          fetch('/api/lop-hoc', { cache: 'no-store' }),
+          fetch('/api/tai-chinh', { cache: 'no-store' }),
+        ]);
+
+        if (!studentsRes.ok) throw new Error('Không thể tải danh sách học viên');
+        setStudents((await studentsRes.json()) as ApiStudent[]);
+
+        if (classesRes.ok) {
+          const classPayload = (await classesRes.json()) as { classGroups?: ApiClassGroup[] };
+          setClassGroups(classPayload.classGroups ?? []);
+        }
+
+        if (financeRes.ok) {
+          setFinanceItems((await financeRes.json()) as ApiFinanceItem[]);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Co loi xay ra');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, []);
+
+  useEffect(() => {
+    if (currentTab !== 'nhap-hoc') return;
+    if (!Number.isFinite(leadIdFromQuery) || leadIdFromQuery <= 0) return;
+    if (prefilledLeadId === leadIdFromQuery) return;
+
+    let isCancelled = false;
+
+    const loadLeadPrefill = async () => {
+      try {
+        const response = await fetch(`/api/tu-van/leads/${leadIdFromQuery}`, { cache: 'no-store' });
+        if (!response.ok) return;
+
+        const lead = (await response.json()) as ApiLeadPrefill;
+        if (isCancelled) return;
+
+        setForm((current) => ({
+          ...current,
+          fullName: current.fullName || lead.fullName,
+          fatherFullName: current.fatherFullName || lead.parentName || '',
+          fatherPhone: current.fatherPhone || lead.parentPhone || '',
+        }));
+
+        if (Array.isArray(lead.preferredSubjects) && lead.preferredSubjects.length > 0) {
+          setSelectedSubjects(lead.preferredSubjects);
+        }
+
+        setPrefilledLeadId(lead.id);
+      } catch {
+        // Ignore prefill errors and keep manual intake flow working.
+      }
+    };
+
+    void loadLeadPrefill();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentTab, leadIdFromQuery, prefilledLeadId]);
+
+  const officialStudents = useMemo(
+    () => students
+      .filter((s) => s.status === STATUS_OFFICIAL)
+      .map((student) => ({
+        ...student,
+        enrollments: student.enrollments.filter((enrollment) => !enrollment.endDate),
+      })),
+    [students]
+  );
+  const leaveStudents = useMemo(
+    () => students
+      .filter((student) => student.enrollments.some((enrollment) => Boolean(enrollment.endDate)))
+      .map((student) => ({
+        ...student,
+        status: STATUS_DROPPED,
+        enrollments: student.enrollments.filter((enrollment) => Boolean(enrollment.endDate)),
+      })),
+    [students]
+  );
+  const trialStudents = useMemo(
+    () => students
+      .filter((s) => s.status === STATUS_TRIAL || s.status === STATUS_EXPIRED)
+      .map((student) => ({
+        ...student,
+        enrollments: student.enrollments.filter((enrollment) => !enrollment.endDate),
+      })),
+    [students]
+  );
+
+  const matchesSearch = useCallback((student: ApiStudent) => (
+    search.length === 0 ||
+    student.fullName.toLowerCase().includes(search.toLowerCase()) ||
+    student.fatherFullName.toLowerCase().includes(search.toLowerCase()) ||
+    student.motherFullName.toLowerCase().includes(search.toLowerCase()) ||
+    student.fatherPhone.includes(search) ||
+    student.motherPhone.includes(search)
+  ), [search]);
+
+  const matchesReportBMonth = useCallback((student: ApiStudent) => {
+    if (reportBMonthFilter === 'all' && reportBYearFilter === 'all') return true;
+    if (!student.reportBDate) return false;
+    const reportBDate = parseISO(student.reportBDate);
+    const monthOk = reportBMonthFilter === 'all' || reportBDate.getMonth() + 1 === Number(reportBMonthFilter);
+    const yearOk = reportBYearFilter === 'all' || reportBDate.getFullYear() === Number(reportBYearFilter);
+    return monthOk && yearOk;
+  }, [reportBMonthFilter, reportBYearFilter]);
+
+  const reportBYears = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+    students.forEach((student) => {
+      if (!student.reportBDate) return;
+      years.add(parseISO(student.reportBDate).getFullYear());
+    });
+
+    return Array.from(years).sort((a, b) => b - a);
+  }, [students]);
+
+  const filteredOfficialStudents = useMemo(
+    () => officialStudents.filter((s) => matchesSearch(s) && matchesReportBMonth(s)),
+    [officialStudents, matchesSearch, matchesReportBMonth]
+  );
+
+  const filteredLeaveStudents = useMemo(
+    () => leaveStudents.filter((s) => matchesSearch(s) && matchesReportBMonth(s)),
+    [leaveStudents, matchesSearch, matchesReportBMonth]
+  );
+
+  const filteredTrialStudents = useMemo(
+    () => trialStudents.filter((s) => {
+      const statusOk = s.status === trialStatusFilter;
+      return matchesSearch(s) && statusOk;
+    }),
+    [trialStudents, matchesSearch, trialStatusFilter]
+  );
+
+  useEffect(() => {
+    setSelectedStudentId(null);
+  }, [currentTab]);
+
+  useEffect(() => {
+    const currentList =
+      currentTab === 'hoc-vien'
+        ? filteredOfficialStudents
+        : currentTab === 'hoc-thu'
+          ? filteredTrialStudents
+          : currentTab === 'nghi-hoc'
+            ? filteredLeaveStudents
+            : [];
+
+    if (currentList.length === 0) {
+      setSelectedStudentId(null);
+      return;
+    }
+
+    const stillExists = selectedStudentId !== null && currentList.some((student) => student.id === selectedStudentId);
+    if (!stillExists) {
+      setSelectedStudentId(null);
+    }
+  }, [currentTab, filteredOfficialStudents, filteredTrialStudents, filteredLeaveStudents, selectedStudentId]);
+
+  const selectedOfficialStudent = useMemo(
+    () => filteredOfficialStudents.find((student) => student.id === selectedStudentId) ?? null,
+    [filteredOfficialStudents, selectedStudentId]
+  );
+
+  const selectedTrialStudent = useMemo(
+    () => filteredTrialStudents.find((student) => student.id === selectedStudentId) ?? null,
+    [filteredTrialStudents, selectedStudentId]
+  );
+
+  const selectedLeaveStudent = useMemo(
+    () => filteredLeaveStudents.find((student) => student.id === selectedStudentId) ?? null,
+    [filteredLeaveStudents, selectedStudentId]
+  );
+
+  const closeStudentPanel = useCallback(() => {
+    setSelectedStudentId(null);
+  }, []);
+
+  const handleEditFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+    startEdit(student);
+  };
+
+  const handleAssignFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+    openAssignDialog(student);
+  };
+
+  const handleDropoutFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+    openDropoutDialog(student);
+  };
+
+  const handleReenrollFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+    openReenrollDialog(student);
+  };
+
+  const handleRegisterOfficialFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+    void registerOfficial(student);
+  };
+
+  async function updateStudentStatus(studentId: number, status: StudentStatus) {
+    const response = await fetch(`/api/hoc-vien/${studentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) {
+      throw new Error('Không thể cập nhật trạng thái học viên');
+    }
+  }
+
+  async function updateEnrollment(enrollmentId: number, payload: Record<string, unknown>) {
+    const response = await fetch(`/api/enrollments/${enrollmentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error('Không thể cập nhật đăng ký môn học');
+    }
+  }
+
+  useEffect(() => {
+    const overdueTrials = trialStudents.filter(
+      (student) => student.status === STATUS_TRIAL && getTrialDaysLeft(student) < 0 && !autoExpiredTrialRef.current.has(student.id)
+    );
+
+    if (overdueTrials.length === 0) return;
+
+    const runAutoExpire = async () => {
+      try {
+        await Promise.all(overdueTrials.map((student) => {
+          autoExpiredTrialRef.current.add(student.id);
+          return updateStudentStatus(student.id, STATUS_EXPIRED);
+        }));
+        await refreshStudents();
+      } catch {
+        // Keep silent here to avoid noisy banner while user is browsing.
+      }
+    };
+
+    void runAutoExpire();
+  }, [trialStudents]);
+
+  const birthdayList = useMemo(() => {
+    const currentMonth = new Date().getMonth();
+    return students
+      .filter((s) => s.birthDate && parseISO(s.birthDate).getMonth() === currentMonth)
+      .map((s) => ({ ...s, ...getBirthdayInfo(s.birthDate ?? s.admissionDate) }))
+      .sort((a, b) => a.daysUntil - b.daysUntil);
+  }, [students]);
+
+  const stats = useMemo(() => {
+    const officialEnrollmentCount = officialStudents.reduce((total, student) => total + student.enrollments.length, 0);
+    const trialEnrollmentCount = trialStudents.reduce((total, student) => total + student.enrollments.length, 0);
+    const droppedEnrollmentCount = leaveStudents.reduce((total, student) => total + student.enrollments.length, 0);
+
+    return [
+      {
+        label: 'Sinh nhật trong tháng',
+        value: students.filter((s) => s.birthDate && parseISO(s.birthDate).getMonth() === new Date().getMonth()).length,
+      },
+      { label: 'Chính thức (lượt môn)', value: officialEnrollmentCount },
+      { label: 'Học thử (lượt môn)', value: trialEnrollmentCount },
+      { label: 'Nghỉ học (lượt môn)', value: droppedEnrollmentCount },
+    ];
+  }, [students, officialStudents, trialStudents, leaveStudents]);
+
+  const availablePaymentMonths = useMemo(() => {
+    const result: Array<{ key: string; label: string; month: number; year: number }> = [];
+    const now = new Date();
+    const base = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    for (let offset = 0; offset < 12; offset += 1) {
+      const date = new Date(base.getFullYear(), base.getMonth() + offset, 1);
+      const month = date.getMonth() + 1;
+      const year = date.getFullYear();
+      const key = `${year}-${String(month).padStart(2, '0')}`;
+      result.push({ key, label: `Tháng ${month}/${year}`, month, year });
+    }
+
+    return result;
+  }, []);
+
+  const paymentYears = useMemo(() => Array.from(new Set(availablePaymentMonths.map((item) => item.year))), [availablePaymentMonths]);
+
+  const selectedFilterMonthKey = useMemo(
+    () => `${tuitionYearFilter}-${String(Number(tuitionMonthFilter)).padStart(2, '0')}`,
+    [tuitionMonthFilter, tuitionYearFilter]
+  );
+
+  const paidMap = useMemo(() => {
+    const map = new Set<string>();
+    financeItems.forEach((item) => {
+      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
+        return;
+      }
+
+      const studentIdMatch = /studentId=(\d+)/.exec(item.note);
+      const monthMatch = /month=(\d{4}-\d{2})/.exec(item.note);
+      if (!studentIdMatch || !monthMatch) {
+        return;
+      }
+
+      map.add(`${studentIdMatch[1]}-${monthMatch[1]}`);
+    });
+    return map;
+  }, [financeItems]);
+
+  const tuitionRows = useMemo(() => {
+    return officialStudents
+      .filter((student) => student.enrollments.length > 0)
+      .map((student) => {
+        const activeEnrollments = student.enrollments.filter((enrollment) => !enrollment.endDate);
+        const subjectCount = Math.max(1, activeEnrollments.length || student.enrollments.length);
+        const paid = paidMap.has(`${student.id}-${selectedFilterMonthKey}`);
+        return {
+          student,
+          subjectCount,
+          estimatedAmount: subjectCount * TUITION_PER_SUBJECT_PER_MONTH,
+          paid,
+        };
+      })
+      .filter((item) => matchesSearch(item.student))
+      .filter((item) => {
+        if (tuitionStatusFilter === 'all') return true;
+        if (tuitionStatusFilter === 'paid') return item.paid;
+        return !item.paid;
+      })
+      .sort((a, b) => Number(a.paid) - Number(b.paid));
+  }, [officialStudents, paidMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+
+  const tuitionDialogAmount = useMemo(() => {
+    if (!tuitionStudent) {
+      return 0;
+    }
+
+    const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+    const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
+    return subjectCount * selectedPaymentMonths.length * TUITION_PER_SUBJECT_PER_MONTH;
+  }, [selectedPaymentMonths.length, tuitionStudent]);
+
+  async function refreshStudents() {
+    const response = await fetch('/api/hoc-vien', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Không thể tải danh sách học viên');
+    setStudents((await response.json()) as ApiStudent[]);
+  }
+
+  async function refreshFinanceItems() {
+    const response = await fetch('/api/tai-chinh', { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Không thể tải dữ liệu học phí');
+    }
+    setFinanceItems((await response.json()) as ApiFinanceItem[]);
+  }
+
+  function parseStudyDays(studyDays: string, fallbackShift: ShiftOption): { selectedWeekdays: Weekday[]; shiftsByWeekday: Partial<Record<Weekday, ShiftOption>> } {
+    const selectedWeekdays: Weekday[] = [];
+    const shiftsByWeekday: Partial<Record<Weekday, ShiftOption>> = {};
+
+    const serializedMatches = Array.from(studyDays.matchAll(/(T[2-7])\s*\((Ca\s[1-5])\)/g));
+    if (serializedMatches.length > 0) {
+      serializedMatches.forEach((match) => {
+        const weekday = match[1] as Weekday;
+        const shift = match[2] as ShiftOption;
+        if (!selectedWeekdays.includes(weekday)) selectedWeekdays.push(weekday);
+        shiftsByWeekday[weekday] = shift;
+      });
+      return { selectedWeekdays, shiftsByWeekday };
+    }
+
+    const plainWeekdays = Array.from(new Set((studyDays.match(/T[2-7]/g) ?? []) as Weekday[]));
+    plainWeekdays.forEach((weekday) => {
+      selectedWeekdays.push(weekday);
+      shiftsByWeekday[weekday] = fallbackShift;
+    });
+    return { selectedWeekdays, shiftsByWeekday };
+  }
+
+  function buildStudyDays(selectedWeekdays: Weekday[], shiftsByWeekday: Partial<Record<Weekday, ShiftOption>>): string {
+    return selectedWeekdays.map((weekday) => `${weekday}(${shiftsByWeekday[weekday] ?? 'Ca 1'})`).join(', ');
+  }
+
+  function toggleSubject(subjectCode: SubjectCode, checked: boolean) {
+    setSelectedSubjects((current) => {
+      if (checked) {
+        return current.includes(subjectCode) ? current : [...current, subjectCode];
+      }
+      if (current.length === 1) return current;
+      return current.filter((subject) => subject !== subjectCode);
+    });
+  }
+
+  function startEdit(student: ApiStudent) {
+    setEditingStudentId(student.id);
+    setEditForm({
+      fullName: student.fullName,
+      birthDate: student.birthDate ? student.birthDate.slice(0, 10) : '',
+      gender: student.gender,
+      admissionDate: student.admissionDate.slice(0, 10),
+      reportBDate: student.reportBDate ? student.reportBDate.slice(0, 10) : '',
+      fatherFullName: student.fatherFullName,
+      fatherPhone: student.fatherPhone,
+      motherFullName: student.motherFullName,
+      motherPhone: student.motherPhone,
+      address: student.address,
+    });
+    setEditOpen(true);
+  }
+
+  async function submitEditStudent() {
+    if (!editingStudentId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/hoc-vien/${editingStudentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: editForm.fullName,
+          birthDate: editForm.birthDate || null,
+          gender: editForm.gender,
+          admissionDate: editForm.admissionDate,
+          reportB: Boolean(editForm.reportBDate),
+          reportBDate: editForm.reportBDate || null,
+          fatherFullName: editForm.fatherFullName,
+          fatherPhone: editForm.fatherPhone,
+          motherFullName: editForm.motherFullName,
+          motherPhone: editForm.motherPhone,
+          address: editForm.address,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Không thể cập nhật thông tin học viên');
+      }
+
+      setEditOpen(false);
+      setEditingStudentId(null);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi cập nhật học viên');
+    }
+  }
+
+  function openTuitionDialog(student: ApiStudent) {
+    const today = new Date();
+    const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    setTuitionStudent(student);
+    setSelectedPaymentMonths([currentMonthKey]);
+    setPaymentMethod('Tiền mặt');
+    setTuitionDialogOpen(true);
+  }
+
+  async function submitTuitionPayment() {
+    if (!tuitionStudent || selectedPaymentMonths.length === 0) {
+      setError('Vui lòng chọn ít nhất 1 tháng cần thu học phí');
+      return;
+    }
+
+    try {
+      const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+      const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
+      const monthlyAmount = subjectCount * TUITION_PER_SUBJECT_PER_MONTH;
+
+      const requests = selectedPaymentMonths.map((monthKey) =>
+        fetch('/api/tai-chinh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'Khác',
+            amount: monthlyAmount,
+            spentAt: `${monthKey}-01`,
+            note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
+            proofImage: null,
+          }),
+        })
+      );
+
+      const responses = await Promise.all(requests);
+      if (responses.some((response) => !response.ok)) {
+        throw new Error('Không thể lưu học phí cho một số tháng');
+      }
+
+      await refreshFinanceItems();
+      setTuitionDialogOpen(false);
+      setTuitionStudent(null);
+      setSelectedPaymentMonths([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi đóng học phí');
+    }
+  }
+
+  function openAssignDialog(student: ApiStudent) {
+    const initial: Partial<Record<SubjectCode, SubjectAssignmentValue>> = {};
+    student.enrollments.forEach((enrollment) => {
+      const parsed = parseStudyDays(enrollment.studyDays, enrollment.classShift as ShiftOption);
+      const selectedWeekdays = parsed.selectedWeekdays.length > 0
+        ? parsed.selectedWeekdays
+        : enrollment.classGroup?.weekday
+          ? [enrollment.classGroup.weekday as Weekday]
+          : [];
+
+      if (selectedWeekdays.length === 0) {
+        const fallback = FIXED_CLASSES.find((item) => item.subjectCode === enrollment.subjectCode)?.weekday;
+        if (fallback) selectedWeekdays.push(fallback);
+      }
+
+      selectedWeekdays.forEach((weekday) => {
+        if (!parsed.shiftsByWeekday[weekday]) {
+          const mappedGroup = classGroups.find((group) => group.subjectCode === enrollment.subjectCode && group.weekday === weekday);
+          parsed.shiftsByWeekday[weekday] = (mappedGroup?.classShift as ShiftOption) ?? (enrollment.classShift as ShiftOption);
+        }
+      });
+
+      initial[enrollment.subjectCode] = {
+        enrollmentId: enrollment.id,
+        registrationType: enrollment.registrationType,
+        enrollmentType: enrollment.enrollmentType,
+        startDate: enrollment.startDate,
+        selectedWeekdays,
+        shiftsByWeekday: parsed.shiftsByWeekday,
+      };
+    });
+
+    setAssignmentValues(initial);
+    setAssigningStudent(student);
+    setAssignOpen(true);
+  }
+
+  function openDropoutDialog(student: ApiStudent) {
+    const activeEnrollments = student.enrollments.filter((enrollment) => !enrollment.endDate);
+    const firstSubject = activeEnrollments[0]?.subjectCode ?? 'MATH';
+    const initialIds = student.enrollments
+      .filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === firstSubject)
+      .map((enrollment) => enrollment.id);
+
+    setDropoutStudent(student);
+    setDropoutDate(new Date().toISOString().slice(0, 10));
+    setDropoutMode('subjects');
+    setDropoutSubject(firstSubject);
+    setDropoutEnrollmentIds(initialIds);
+    setDropoutOpen(true);
+  }
+
+  function openReenrollDialog(student: ApiStudent) {
+    const availableSubjects = Array.from(
+      new Set(
+        student.enrollments
+          .filter((enrollment) => Boolean(enrollment.endDate))
+          .map((enrollment) => enrollment.subjectCode)
+      )
+    );
+
+    setReenrollStudent(student);
+    setReenrollDate(new Date().toISOString().slice(0, 10));
+    setReenrollSubject(availableSubjects[0] ?? 'MATH');
+    setReenrollOpen(true);
+  }
+
+  function getTrialDaysLeft(student: ApiStudent) {
+    const trialEnrollment = student.enrollments.find((e) => e.registrationType === 'H\u1ecdc th\u1eed');
+    const trialStart = trialEnrollment?.startDate ?? student.admissionDate;
+    return 14 - differenceInCalendarDays(startOfDay(new Date()), startOfDay(parseISO(trialStart)));
+  }
+
+  async function submitAssignments() {
+    if (!assigningStudent) return;
+    setSavingAssign(true);
+
+    try {
+      const classGroupCache = new Map<string, ApiClassGroup>(
+        classGroups.map((group) => [`${group.subjectCode}-${group.weekday}-${group.classShift}`, group] as const)
+      );
+
+      const ensureClassGroup = async (subjectCode: SubjectCode, weekday: Weekday, classShift: ShiftOption) => {
+        const key = `${subjectCode}-${weekday}-${classShift}`;
+        const existed = classGroupCache.get(key);
+        if (existed) return existed;
+
+        const fixed = FIXED_CLASSES.find((item) => item.subjectCode === subjectCode && item.weekday === weekday);
+        const response = await fetch('/api/lop-hoc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            label: `${fixed?.name ?? `${subjectCode}-${weekday}`} - ${formatClassShiftByWeekday(weekday, classShift as ClassShift)}`,
+            subjectCode,
+            weekday,
+            classShift,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Không thể tạo lớp học để gán đăng ký môn học');
+        }
+
+        const created = (await response.json()) as ApiClassGroup;
+        const normalized: ApiClassGroup = {
+          id: created.id,
+          subjectCode: created.subjectCode,
+          weekday: created.weekday,
+          classShift: created.classShift,
+          label: created.label,
+        };
+        classGroupCache.set(key, normalized);
+        return normalized;
+      };
+
+      const updates = assigningStudent.enrollments.map(async (enrollment) => {
+        const selected = assignmentValues[enrollment.subjectCode];
+        if (!selected || selected.selectedWeekdays.length === 0) return;
+
+        const primaryWeekday = selected.selectedWeekdays[0];
+        const primaryShift = selected.shiftsByWeekday[primaryWeekday] ?? 'Ca 1';
+        await Promise.all(
+          selected.selectedWeekdays.map((weekday) => {
+            const shift = selected.shiftsByWeekday[weekday] ?? 'Ca 1';
+            return ensureClassGroup(enrollment.subjectCode, weekday, shift);
+          })
+        );
+
+        const matchedClassGroup = await ensureClassGroup(enrollment.subjectCode, primaryWeekday, primaryShift);
+        const serializedStudyDays = buildStudyDays(selected.selectedWeekdays, selected.shiftsByWeekday);
+
+        const changed =
+          enrollment.classGroup?.id !== matchedClassGroup.id ||
+          enrollment.classShift !== primaryShift ||
+          enrollment.studyDays !== serializedStudyDays;
+        if (!changed) return;
+
+        const response = await fetch(`/api/enrollments/${enrollment.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            classGroupId: matchedClassGroup.id,
+            classShift: primaryShift,
+            studyDays: serializedStudyDays,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Không thể cập nhật xếp lớp cho một số môn');
+        }
+      });
+
+      await Promise.all(updates);
+
+      await refreshStudents();
+      setClassGroups(Array.from(classGroupCache.values()));
+      setAssignOpen(false);
+      setAssigningStudent(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi xếp lớp');
+    } finally {
+      setSavingAssign(false);
+    }
+  }
+
+  async function submitStudent() {
+    try {
+      if (selectedSubjects.length === 0) {
+        throw new Error('Vui lòng chọn ít nhất 1 môn học');
+      }
+
+      if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && !admissionFeePaid) {
+        throw new Error('Vui lòng xác nhận đã đóng phí nhập học 300.000đ');
+      }
+
+      const statusFromAdmission = admissionRegistrationType === 'Hoc thu' ? STATUS_TRIAL : STATUS_OFFICIAL;
+      const payload = {
+        ...form,
+        status: statusFromAdmission,
+        birthDate: form.birthDate || null,
+        reportB: false,
+        assignedStaffId: form.assignedStaffId ? Number(form.assignedStaffId) : null,
+        intakeSource: statusFromAdmission === STATUS_OFFICIAL ? officialIntakeSource : null,
+        admissionFeePaid: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeePaid : false,
+      };
+
+      const response = await fetch('/api/hoc-vien', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error('Không thể lưu học viên');
+
+      const savedStudent = (await response.json()) as { id: number };
+
+      const targetStudentId = savedStudent.id;
+      if (targetStudentId) {
+        const subjectsToCreate = selectedSubjects;
+
+        if (subjectsToCreate.length > 0) {
+          const enrollmentRequests = subjectsToCreate.map((subjectCode) =>
+            fetch('/api/enrollments', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                studentId: targetStudentId,
+                classGroupId: null,
+                subjectCode,
+                registrationType: admissionRegistrationType === 'Hoc thu' ? 'Học thử' : 'Chính thức',
+                enrollmentType: '2 buổi/tuần',
+                studyDays: 'T2',
+                classShift: 'Ca 1',
+                startDate: form.admissionDate,
+                endDate: null,
+              }),
+            })
+          );
+
+          const enrollmentResponses = await Promise.all(enrollmentRequests);
+          if (enrollmentResponses.some((item) => !item.ok)) {
+            throw new Error('Không thể tạo đăng ký cho một số môn học');
+          }
+        }
+
+        if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && admissionFeePaid) {
+          const admissionFeeResponse = await fetch('/api/tai-chinh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'Khác',
+              amount: 300000,
+              spentAt: form.admissionDate,
+              note: `[ADMISSION_FEE] studentId=${targetStudentId};source=new-intake`,
+              proofImage: null,
+            }),
+          });
+
+          if (!admissionFeeResponse.ok) {
+            throw new Error('Không thể ghi nhận phí nhập học');
+          }
+        }
+
+        if (Number.isFinite(leadIdFromQuery) && leadIdFromQuery > 0) {
+          await fetch(`/api/tu-van/leads/${leadIdFromQuery}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'Đã đăng ký', convertedStudentId: targetStudentId }),
+          });
+        }
+      }
+
+      setForm(emptyForm);
+      setSelectedSubjects(['MATH']);
+      setAdmissionRegistrationType('Chinh thuc');
+      setOfficialIntakeSource('new');
+      setAdmissionFeePaid(false);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi lưu nhập học');
+    }
+  }
+
+  async function registerOfficial(student: ApiStudent) {
+    try {
+      await updateStudentStatus(student.id, STATUS_OFFICIAL);
+      await Promise.all(
+        student.enrollments.map((enrollment) =>
+          updateEnrollment(enrollment.id, { registrationType: 'Chinh thuc' })
+        )
+      );
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể đăng ký học chính thức');
+    }
+  }
+
+  async function submitDropout() {
+    if (!dropoutStudent) return;
+    try {
+      const activeEnrollments = dropoutStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+      const targetIds = dropoutMode === 'all'
+        ? activeEnrollments.map((enrollment) => enrollment.id)
+        : activeEnrollments
+          .filter((enrollment) => enrollment.subjectCode === dropoutSubject)
+          .map((enrollment) => enrollment.id);
+
+      if (targetIds.length === 0) {
+        throw new Error('Vui lòng chọn môn cần thôi học');
+      }
+
+      await Promise.all(
+        targetIds.map((enrollmentId) =>
+          updateEnrollment(enrollmentId, { endDate: dropoutDate })
+        )
+      );
+
+      const remainingActiveCount = activeEnrollments.length - targetIds.length;
+      await updateStudentStatus(dropoutStudent.id, remainingActiveCount > 0 ? STATUS_OFFICIAL : STATUS_DROPPED);
+
+      setDropoutOpen(false);
+      setDropoutStudent(null);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể xử lý thôi học');
+    }
+  }
+
+  async function submitReenroll() {
+    if (!reenrollStudent) return;
+    try {
+      const targetIds = reenrollStudent.enrollments
+        .filter((enrollment) => Boolean(enrollment.endDate) && enrollment.subjectCode === reenrollSubject)
+        .map((enrollment) => enrollment.id);
+
+      if (targetIds.length === 0) {
+        throw new Error('Không có môn đã nghỉ để nhập học lại');
+      }
+
+      await Promise.all(
+        targetIds.map((enrollmentId) =>
+          updateEnrollment(enrollmentId, {
+            // Keep original student admission date unchanged; this is rejoin date for statistics.
+            startDate: reenrollDate,
+            endDate: null,
+            registrationType: 'Chinh thuc',
+          })
+        )
+      );
+
+      await updateStudentStatus(reenrollStudent.id, STATUS_OFFICIAL);
+
+      setReenrollOpen(false);
+      setReenrollStudent(null);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể xử lý nhập học lại');
+    }
+  }
+
+  if (loading) {
+    return <div className="rounded-2xl border bg-white p-6 text-sm text-muted-foreground">Đang tải dữ liệu học viên...</div>;
+  }
+
+  if (error) {
+    return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>;
+  }
+
+  const showStudentFilters = ['hoc-vien', 'nghi-hoc', 'hoc-thu', 'chua-thu-hoc-phi'].includes(currentTab);
+
+  return (
+    <div className="space-y-6">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label={stats[0].label} value={String(stats[0].value)} delta="Theo tháng hiện tại" tone="amber" />
+        <MetricCard label={stats[1].label} value={String(stats[1].value)} delta="Đang hoạt động" tone="emerald" />
+        <MetricCard label={stats[2].label} value={String(stats[2].value)} delta="Cần theo dõi" tone="cyan" />
+        <MetricCard label={stats[3].label} value={String(stats[3].value)} delta="Đã nghỉ" tone="slate" />
+      </section>
+
+      <Card className="glass-card">
+        <CardHeader>
+          <CardTitle>Quản lý học viên</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <Tabs value={currentTab} className="space-y-4">
+
+            {currentTab === 'nhap-hoc' ? (
+              <div className="mx-auto w-full max-w-4xl rounded-2xl border bg-white p-5 lg:p-6">
+                <div className="mb-4 flex items-center justify-between">
+                  <CardTitle className="text-lg">Nhập học viên mới</CardTitle>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2 md:col-span-2"><Label>Họ tên</Label><Input value={form.fullName} onChange={(e) => setForm((current) => ({ ...current, fullName: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Ngày sinh</Label><Input type="date" value={form.birthDate} onChange={(e) => setForm((current) => ({ ...current, birthDate: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Giới tính</Label><Select value={form.gender} onValueChange={(value) => setForm((current) => ({ ...current, gender: value as Gender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={GENDER_MALE}>Nam</SelectItem><SelectItem value={GENDER_FEMALE}>Nữ</SelectItem><SelectItem value={GENDER_OTHER}>Khác</SelectItem></SelectContent></Select></div>
+                  <div className="space-y-2"><Label>Ngày nhập học</Label><Input type="date" value={form.admissionDate} onChange={(e) => setForm((current) => ({ ...current, admissionDate: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Địa chỉ</Label><Input value={form.address} onChange={(e) => setForm((current) => ({ ...current, address: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Họ tên bố</Label><Input value={form.fatherFullName} onChange={(e) => setForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>SĐT bố</Label><Input value={form.fatherPhone} onChange={(e) => setForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={form.motherFullName} onChange={(e) => setForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={form.motherPhone} onChange={(e) => setForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
+
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Môn học đăng ký</Label>
+                    <div className="grid gap-2 rounded-xl border p-3 sm:grid-cols-2">
+                      {SUBJECT_OPTIONS.map((subject) => (
+                        <label key={subject} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={selectedSubjects.includes(subject)}
+                            onChange={(event) => toggleSubject(subject, event.target.checked)}
+                          />
+                          <span>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Loại đăng ký</Label>
+                    <Select value={admissionRegistrationType} onValueChange={(value) => setAdmissionRegistrationType(value as AdmissionRegistrationType)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Chinh thuc">Chính thức</SelectItem>
+                        <SelectItem value="Hoc thu">Học thử</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {admissionRegistrationType === 'Chinh thuc' ? (
+                    <>
+                      <div className="space-y-2">
+                        <Label>Nguồn</Label>
+                        <Select value={officialIntakeSource} onValueChange={(value) => setOfficialIntakeSource(value as IntakeSource)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="transfer">Chuyển đến từ trung tâm khác</SelectItem>
+                            <SelectItem value="new">Mới</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {officialIntakeSource === 'new' ? (
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>Phí nhập học</Label>
+                          <label className="flex items-center gap-2 rounded-xl border p-3 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={admissionFeePaid}
+                              onChange={(event) => setAdmissionFeePaid(event.target.checked)}
+                            />
+                            <span>Đã đóng phí nhập học 300.000d</span>
+                          </label>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+                <Button className="mt-4 w-full" onClick={() => void submitStudent()}><PlusCircle className="mr-2 h-4 w-4" />Lưu và tạo hồ sơ nhập học</Button>
+              </div>
+            ) : null}
+
+            {showStudentFilters ? (
+              <div className="flex flex-col gap-4">
+                <div className="space-y-4 rounded-2xl border bg-white p-4">
+                  <div className="grid gap-3 lg:grid-cols-4">
+                    <div className={cn('relative', currentTab === 'chua-thu-hoc-phi' ? 'lg:col-span-1' : 'lg:col-span-2')}>
+                      <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm tên học viên, ba/mẹ, SĐT..." className="pl-10" />
+                    </div>
+                    {currentTab === 'chua-thu-hoc-phi' ? (
+                      <>
+                        <Select value={tuitionStatusFilter} onValueChange={(value) => setTuitionStatusFilter(value as TuitionStatusFilter)}>
+                          <SelectTrigger><SelectValue placeholder="Trạng thái học phí" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Tất cả trạng thái</SelectItem>
+                            <SelectItem value="unpaid">Chưa đóng</SelectItem>
+                            <SelectItem value="paid">Đã đóng</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <div className="grid grid-cols-2 gap-3 lg:col-span-2">
+                          <Select value={tuitionMonthFilter} onValueChange={setTuitionMonthFilter}>
+                            <SelectTrigger><SelectValue placeholder="Tháng" /></SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 12 }).map((_, idx) => <SelectItem key={idx + 1} value={String(idx + 1)}>Tháng {idx + 1}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                          <Select value={tuitionYearFilter} onValueChange={setTuitionYearFilter}>
+                            <SelectTrigger><SelectValue placeholder="Năm" /></SelectTrigger>
+                            <SelectContent>
+                              {paymentYears.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </>
+                    ) : currentTab === 'hoc-thu' ? (
+                      <Select value={trialStatusFilter} onValueChange={(value) => setTrialStatusFilter(value as TrialStatusFilter)}>
+                        <SelectTrigger><SelectValue placeholder="Trang thai" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={STATUS_TRIAL}>Học thử</SelectItem>
+                          <SelectItem value={STATUS_EXPIRED}>Hết hạn</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <>
+                        <Select value={reportBMonthFilter} onValueChange={setReportBMonthFilter}>
+                          <SelectTrigger><SelectValue placeholder="Thang Report B" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Tháng report B</SelectItem>
+                            {Array.from({ length: 12 }).map((_, idx) => <SelectItem key={idx + 1} value={String(idx + 1)}>Tháng {idx + 1}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Select value={reportBYearFilter} onValueChange={setReportBYearFilter}>
+                          <SelectTrigger><SelectValue placeholder="Nam Report B" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Năm report B</SelectItem>
+                            {reportBYears.map((year) => <SelectItem key={year} value={String(year)}>Năm {year}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <TabsContent value="hoc-vien" className="space-y-4">
+              <div className="grid gap-4">
+                <div className="overflow-hidden rounded-2xl border bg-white">
+                  <StudentTable
+                    students={filteredOfficialStudents}
+                    selectedStudentId={selectedOfficialStudent?.id ?? null}
+                    statusVariant="success"
+                    showReportB
+                    onSelect={setSelectedStudentId}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="nghi-hoc" className="space-y-4">
+              <div className="grid gap-4">
+                <div className="overflow-hidden rounded-2xl border bg-white">
+                  <StudentTable
+                    students={filteredLeaveStudents}
+                    selectedStudentId={selectedLeaveStudent?.id ?? null}
+                    statusVariant="destructive"
+                    showReportB
+                    onSelect={setSelectedStudentId}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="hoc-thu" className="space-y-4">
+              <div className="grid gap-4">
+                <div className="overflow-hidden rounded-2xl border bg-white">
+                  <StudentTable
+                    students={filteredTrialStudents}
+                    selectedStudentId={selectedTrialStudent?.id ?? null}
+                    statusVariant="warning"
+                    showTrialCountdown
+                    getTrialDaysLeft={getTrialDaysLeft}
+                    onSelect={setSelectedStudentId}
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="sinh-nhat" className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {birthdayList.map((student) => (
+                  <Card key={student.id} className="border bg-white">
+                    <CardContent className="space-y-3 p-5">
+                      <div className="flex items-center justify-between">
+                        <p className="font-semibold text-slate-950">{student.fullName}</p>
+                        <Badge className="whitespace-nowrap" variant={student.passed ? 'secondary' : student.daysUntil <= 7 ? 'warning' : 'default'}>
+                          {student.passed ? 'Đã qua' : student.daysUntil <= 7 ? '7 ngày tới' : 'Sau 7 ngày'}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">Sinh nhật: {student.birthDate ? formatDate(student.birthDate) : '-'}</p>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1"><CalendarDays className="h-4 w-4" /> Con {student.daysUntil} ngay</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </TabsContent>
+
+            <TabsContent value="chua-thu-hoc-phi" className="space-y-4">
+              <Card className="border bg-white">
+                <CardHeader>
+                  <CardTitle className="text-lg">Danh sách học phí tháng {tuitionMonthFilter}/{tuitionYearFilter}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Học viên</TableHead>
+                        <TableHead>Số môn</TableHead>
+                        <TableHead>Học phí/tháng</TableHead>
+                        <TableHead>Trạng thái</TableHead>
+                        <TableHead className="text-right">Hành động</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {tuitionRows.map((row) => (
+                        <TableRow key={row.student.id}>
+                          <TableCell className="font-medium">{row.student.fullName}</TableCell>
+                          <TableCell>{row.subjectCount}</TableCell>
+                          <TableCell>{formatCurrency(row.estimatedAmount)}</TableCell>
+                          <TableCell>
+                            <Badge variant={row.paid ? 'success' : 'warning'}>{row.paid ? 'Đã đóng' : 'Chưa đóng'}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end">
+                              {!row.paid ? <Button size="sm" onClick={() => openTuitionDialog(row.student)}><CircleDollarSign className="mr-2 h-4 w-4" /> Đóng học phí</Button> : null}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="nhap-hoc" className="space-y-1" />
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {portalReady && selectedOfficialStudent && currentTab === 'hoc-vien'
+        ? createPortal(
+          <>
+            <button type="button" className="fixed inset-0 z-[90] bg-slate-900/25" onClick={closeStudentPanel} aria-label="Đóng" />
+            <aside className="fixed inset-y-0 right-0 z-[100] h-dvh w-full max-w-md overflow-y-auto border-l bg-white p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <p className="text-lg uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
+                <Button type="button" variant="outline" size="icon" onClick={closeStudentPanel}><X className="h-4 w-4" /></Button>
+              </div>
+              <StudentDetailPanel
+                student={selectedOfficialStudent}
+                classGroups={classGroups}
+                statusVariant="success"
+                showReportB
+                onEdit={handleEditFromPanel}
+                onAssign={handleAssignFromPanel}
+                extraActionLabel="Thôi học"
+                onExtraAction={handleDropoutFromPanel}
+              />
+            </aside>
+          </>,
+          document.body
+        )
+        : null}
+
+      {portalReady && selectedLeaveStudent && currentTab === 'nghi-hoc'
+        ? createPortal(
+          <>
+            <button type="button" className="fixed inset-0 z-[90] bg-slate-900/25" onClick={closeStudentPanel} aria-label="Đóng" />
+            <aside className="fixed inset-y-0 right-0 z-[100] h-dvh w-full max-w-md overflow-y-auto border-l bg-white p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
+                <Button type="button" variant="outline" size="icon" onClick={closeStudentPanel}><X className="h-4 w-4" /></Button>
+              </div>
+              <StudentDetailPanel
+                student={selectedLeaveStudent}
+                classGroups={classGroups}
+                statusVariant="destructive"
+                showReportB
+                onEdit={handleEditFromPanel}
+                onAssign={handleAssignFromPanel}
+                extraActionLabel="Nhập học lại"
+                onExtraAction={handleReenrollFromPanel}
+              />
+            </aside>
+          </>,
+          document.body
+        )
+        : null}
+
+      {portalReady && selectedTrialStudent && currentTab === 'hoc-thu'
+        ? createPortal(
+          <>
+            <button type="button" className="fixed inset-0 z-[90] bg-slate-900/25" onClick={closeStudentPanel} aria-label="Đóng" />
+            <aside className="fixed inset-y-0 right-0 z-[100] h-dvh w-full max-w-md overflow-y-auto border-l bg-white p-5 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
+                <Button type="button" variant="outline" size="icon" onClick={closeStudentPanel}><X className="h-4 w-4" /></Button>
+              </div>
+              <StudentDetailPanel
+                student={selectedTrialStudent}
+                classGroups={classGroups}
+                statusVariant="warning"
+                showTrialCountdown
+                getTrialDaysLeft={getTrialDaysLeft}
+                onEdit={handleEditFromPanel}
+                onAssign={handleAssignFromPanel}
+                showOfficialRegisterButton
+                onRegisterOfficial={handleRegisterOfficialFromPanel}
+              />
+            </aside>
+          </>,
+          document.body
+        )
+        : null}
+
+      <Dialog open={tuitionDialogOpen} onOpenChange={setTuitionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Đóng học phí</DialogTitle>
+            <DialogDescription>{tuitionStudent ? `Học viên: ${tuitionStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Họ tên học viên</Label>
+              <Input value={tuitionStudent?.fullName ?? ''} disabled />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tháng/năm thu</Label>
+              <div className="max-h-52 space-y-2 overflow-auto rounded-xl border p-3">
+                {availablePaymentMonths.map((item) => (
+                  <label key={item.key} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={selectedPaymentMonths.includes(item.key)}
+                      onChange={(event) => {
+                        setSelectedPaymentMonths((current) => event.target.checked
+                          ? [...current, item.key]
+                          : current.filter((value) => value !== item.key));
+                      }}
+                    />
+                    <span>{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Hình thức thanh toán</Label>
+              <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Tiền mặt">Tiền mặt</SelectItem>
+                  <SelectItem value="Chuyển khoản">Chuyển khoản</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-xl border bg-muted/20 p-3 text-sm">
+              Số tiền tự tính: <span className="font-semibold">{formatCurrency(tuitionDialogAmount)}</span>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTuitionDialogOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitTuitionPayment()}>Xác nhận đóng học phí</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
+        <DialogContent className="max-h-[82vh] overflow-hidden sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Xếp lớp theo môn đăng ký</DialogTitle>
+            <DialogDescription>{assigningStudent ? `Học viên: ${assigningStudent.fullName}` : 'Chọn nhiều lớp và ca học theo từng môn'}</DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[62vh] space-y-4 overflow-y-auto pr-1">
+            {assigningStudent?.enrollments.length ? SUBJECT_OPTIONS
+              .filter((subjectCode) => assigningStudent.enrollments.some((enrollment) => enrollment.subjectCode === subjectCode))
+              .map((subjectCode) => {
+                const selected = assignmentValues[subjectCode];
+                if (!selected) return null;
+
+                const fixedClasses = FIXED_CLASSES.filter((item) => item.subjectCode === subjectCode);
+
+                return (
+                  <div key={subjectCode} className="rounded-2xl border p-4">
+                    <div className="mb-3 flex items-center gap-2">
+                      {getSubjectBadge(subjectCode)}
+                      <span className="text-sm text-muted-foreground">{selected.registrationType} - {selected.enrollmentType}</span>
+                    </div>
+
+                    <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border p-3">
+                      {fixedClasses.map((item) => {
+                        const checked = selected.selectedWeekdays.includes(item.weekday);
+                        const currentShift = selected.shiftsByWeekday[item.weekday] ?? 'Ca 1';
+                        const mappedClass = classGroups.find((group) => group.subjectCode === subjectCode && group.weekday === item.weekday);
+
+                        return (
+                          <div key={`${subjectCode}-${item.weekday}`} className="grid items-center gap-2 rounded-lg border bg-slate-50 p-2 sm:grid-cols-[1fr_120px]">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => {
+                                  setAssignmentValues((current) => {
+                                    const currentItem = current[subjectCode] as SubjectAssignmentValue;
+                                    const selectedWeekdays = event.target.checked
+                                      ? Array.from(new Set([...currentItem.selectedWeekdays, item.weekday]))
+                                      : currentItem.selectedWeekdays.filter((weekday) => weekday !== item.weekday);
+
+                                    return {
+                                      ...current,
+                                      [subjectCode]: {
+                                        ...currentItem,
+                                        selectedWeekdays,
+                                      },
+                                    };
+                                  });
+                                }}
+                              />
+                              <span>{item.name}</span>
+                              <span className="text-xs text-muted-foreground">({mappedClass?.label ?? item.weekday})</span>
+                            </label>
+
+                            <Select
+                              value={currentShift}
+                              onValueChange={(value) => {
+                                setAssignmentValues((current) => {
+                                  const currentItem = current[subjectCode] as SubjectAssignmentValue;
+                                  return {
+                                    ...current,
+                                    [subjectCode]: {
+                                      ...currentItem,
+                                      shiftsByWeekday: {
+                                        ...currentItem.shiftsByWeekday,
+                                        [item.weekday]: value as ShiftOption,
+                                      },
+                                    },
+                                  };
+                                });
+                              }}
+                            >
+                              <SelectTrigger><SelectValue placeholder="Ca hoc" /></SelectTrigger>
+                              <SelectContent>
+                                {SHIFT_OPTIONS.map((shift) => (
+                                  <SelectItem key={shift} value={shift}>{formatClassShiftByWeekday(item.weekday, shift as ClassShift)}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }) : (
+              <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">Học viên chưa có môn đăng ký để xếp lớp.</div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitAssignments()} disabled={savingAssign || !(assigningStudent?.enrollments.length)}>
+              {savingAssign ? 'Đang lưu...' : 'Lưu xếp lớp'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Chỉnh sửa thông tin học viên</DialogTitle>
+            <DialogDescription>Chỉ cập nhật thông tin cá nhân hiện tại của học viên.</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2"><Label>Họ tên</Label><Input value={editForm.fullName} onChange={(e) => setEditForm((current) => ({ ...current, fullName: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Ngày sinh</Label><Input type="date" value={editForm.birthDate} onChange={(e) => setEditForm((current) => ({ ...current, birthDate: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Giới tính</Label><Select value={editForm.gender} onValueChange={(value) => setEditForm((current) => ({ ...current, gender: value as Gender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={GENDER_MALE}>Nam</SelectItem><SelectItem value={GENDER_FEMALE}>Nữ</SelectItem><SelectItem value={GENDER_OTHER}>Khác</SelectItem></SelectContent></Select></div>
+            <div className="space-y-2"><Label>Ngày nhập học</Label><Input type="date" value={editForm.admissionDate} onChange={(e) => setEditForm((current) => ({ ...current, admissionDate: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Report B</Label><Input type="date" value={editForm.reportBDate} onChange={(e) => setEditForm((current) => ({ ...current, reportBDate: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Họ tên ba</Label><Input value={editForm.fatherFullName} onChange={(e) => setEditForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SĐT ba</Label><Input value={editForm.fatherPhone} onChange={(e) => setEditForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={editForm.motherFullName} onChange={(e) => setEditForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={editForm.motherPhone} onChange={(e) => setEditForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
+            <div className="space-y-2 md:col-span-2"><Label>Địa chỉ</Label><Input value={editForm.address} onChange={(e) => setEditForm((current) => ({ ...current, address: e.target.value }))} /></div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitEditStudent()}>Lưu chỉnh sửa</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dropoutOpen} onOpenChange={setDropoutOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xử lý thôi học</DialogTitle>
+            <DialogDescription>{dropoutStudent ? `Học viên: ${dropoutStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Ngày kết thúc học</Label>
+              <Input type="date" value={dropoutDate} onChange={(e) => setDropoutDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Phương thức</Label>
+              <Select
+                value={dropoutMode}
+                onValueChange={(value) => {
+                  const nextMode = value as 'all' | 'subjects';
+                  setDropoutMode(nextMode);
+                  if (nextMode === 'subjects' && dropoutStudent) {
+                    const subjectEnrollments = dropoutStudent.enrollments.filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === dropoutSubject);
+                    setDropoutEnrollmentIds(subjectEnrollments.map((enrollment) => enrollment.id));
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Thoi hoc toan bo</SelectItem>
+                  <SelectItem value="subjects">Thoi hoc theo mon</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {dropoutMode === 'subjects' ? (
+              <div className="space-y-2 rounded-xl border p-3">
+                <Label>Môn thôi học</Label>
+                <Select
+                  value={dropoutSubject}
+                  onValueChange={(value) => {
+                    const subject = value as SubjectCode;
+                    setDropoutSubject(subject);
+                    const subjectEnrollments = (dropoutStudent?.enrollments ?? []).filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === subject);
+                    setDropoutEnrollmentIds(subjectEnrollments.map((enrollment) => enrollment.id));
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from(new Set((dropoutStudent?.enrollments ?? []).filter((enrollment) => !enrollment.endDate).map((enrollment) => enrollment.subjectCode))).map((subject) => (
+                      <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDropoutOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitDropout()}>Xác nhận</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reenrollOpen} onOpenChange={setReenrollOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nhập học lại</DialogTitle>
+            <DialogDescription>{reenrollStudent ? `Học viên: ${reenrollStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Ngày nhập học lại</Label>
+              <Input type="date" value={reenrollDate} onChange={(e) => setReenrollDate(e.target.value)} />
+            </div>
+            <div className="space-y-2 rounded-xl border p-3">
+              <Label>Môn nhập học lại</Label>
+              <Select value={reenrollSubject} onValueChange={(value) => setReenrollSubject(value as SubjectCode)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Array.from(new Set((reenrollStudent?.enrollments ?? []).filter((enrollment) => Boolean(enrollment.endDate)).map((enrollment) => enrollment.subjectCode))).map((subject) => (
+                    <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toan' : 'Tieng Anh'}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReenrollOpen(false)}>Huy</Button>
+            <Button onClick={() => void submitReenroll()}>Xac nhan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export default function StudentsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Dang tai...</div>}>
+      <StudentsPageContent />
+    </Suspense>
+  );
+}
+
+type StudentTableProps = {
+  students: ApiStudent[];
+  selectedStudentId: number | null;
+  statusVariant: 'success' | 'warning' | 'destructive';
+  showReportB?: boolean;
+  showTrialCountdown?: boolean;
+  onSelect: (studentId: number) => void;
+  getTrialDaysLeft?: (student: ApiStudent) => number;
+};
+
+type StudentDetailPanelProps = {
+  student: ApiStudent | null;
+  classGroups: ApiClassGroup[];
+  statusVariant: 'success' | 'warning' | 'destructive';
+  showReportB?: boolean;
+  showTrialCountdown?: boolean;
+  showOfficialRegisterButton?: boolean;
+  onEdit: (student: ApiStudent) => void;
+  onAssign: (student: ApiStudent) => void;
+  getTrialDaysLeft?: (student: ApiStudent) => number;
+  extraActionLabel?: string;
+  onExtraAction?: (student: ApiStudent) => void;
+  onRegisterOfficial?: (student: ApiStudent) => void;
+};
+
+function StudentDetailPanel({
+  student,
+  classGroups,
+  statusVariant,
+  showReportB,
+  showTrialCountdown,
+  showOfficialRegisterButton,
+  onEdit,
+  onAssign,
+  getTrialDaysLeft,
+  extraActionLabel,
+  onExtraAction,
+  onRegisterOfficial,
+}: StudentDetailPanelProps) {
+  if (!student) {
+    return (
+      <Card className="glass-card border-dashed xl:sticky xl:top-24">
+        <CardContent className="p-6 text-sm text-muted-foreground">
+          Chọn một học viên trong bảng để xem thông tin chi tiết.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const daysLeft = showTrialCountdown && getTrialDaysLeft ? getTrialDaysLeft(student) : null;
+  const isTrialExpiredByCountdown = showTrialCountdown && daysLeft !== null && daysLeft < 0;
+  const displayedStatus = isTrialExpiredByCountdown ? STATUS_EXPIRED : student.status;
+
+  return (
+    <Card className="glass-card overflow-hidden xl:sticky xl:top-24">
+      <CardHeader className="border-b bg-gradient-to-r from-slate-50 to-white pb-4">
+        <div className="space-y-2">
+          <CardTitle className="text-xl text-slate-950">{student.fullName}</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className="whitespace-nowrap" variant={displayedStatus === STATUS_EXPIRED ? 'destructive' : statusVariant}>{displayedStatus}</Badge>
+            {student.enrollments.map((enrollment) => (
+              <span key={enrollment.id}>{getSubjectBadge(enrollment.subjectCode)}</span>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-5 p-5">
+        <div className="grid grid-cols-2 gap-3">
+          <Button variant="outline" onClick={() => onEdit(student)}><Edit3 className="mr-2 h-4 w-4" />Chỉnh sửa</Button>
+          <Button onClick={() => onAssign(student)}><PlusCircle className="mr-2 h-4 w-4" />Xếp lớp</Button>
+          {extraActionLabel && onExtraAction ? (
+            <Button
+              className="col-span-2"
+              variant={extraActionLabel === 'Thôi học' ? 'destructive' : 'secondary'}
+              onClick={() => onExtraAction(student)}
+            >
+              {extraActionLabel === 'Thôi học' ? <ShieldX className="mr-2 h-4 w-4" /> : null}
+              {extraActionLabel}
+            </Button>
+          ) : null}
+          {showOfficialRegisterButton && onRegisterOfficial && (student.status === STATUS_EXPIRED || isTrialExpiredByCountdown) ? (
+            <Button className="col-span-2" onClick={() => onRegisterOfficial(student)}>Đăng ký chính thức</Button>
+          ) : null}
+        </div>
+
+        <div className="space-y-3 rounded-xl border bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thông tin cơ bản</p>
+          <div className="space-y-2 text-sm">
+            <p><span className="text-muted-foreground">Giới tính:</span> {student.gender}</p>
+            <p><span className="text-muted-foreground">Ngày sinh:</span> {formatDate(student.birthDate ?? student.admissionDate)}</p>
+            <p><span className="text-muted-foreground">Ngày nhập học:</span> {formatDate(student.admissionDate)}</p>
+            {showReportB ? <p><span className="text-muted-foreground">Ngày Report B:</span> {student.reportBDate ? formatDate(student.reportBDate) : '-'}</p> : null}
+            <p><span className="text-muted-foreground">Địa chỉ:</span> {student.address || '-'}</p>
+            {showTrialCountdown ? (
+              <p>
+                <span className="text-muted-foreground">Đếm ngược học thử:</span>{' '}
+                {daysLeft !== null && daysLeft >= 0 ? `Con ${daysLeft} ngay` : `Qua han ${Math.abs(daysLeft ?? 0)} ngay`}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-xl border bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phụ huynh liên hệ</p>
+          <div className="space-y-2 text-sm">
+            <p>Ba: {student.fatherFullName || '-'}</p>
+            <p className="flex items-center gap-1 text-muted-foreground"><PhoneCall className="h-3.5 w-3.5" /> {student.fatherPhone || '-'}</p>
+            <p>Me: {student.motherFullName || '-'}</p>
+            <p className="flex items-center gap-1 text-muted-foreground"><PhoneCall className="h-3.5 w-3.5" /> {student.motherPhone || '-'}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-xl border bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Môn học đăng ký</p>
+          <div className="space-y-2">
+            {student.enrollments.length ? student.enrollments.map((enrollment) => (
+              <div key={enrollment.id} className="rounded-lg border bg-slate-50 p-3 text-sm">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  {getSubjectBadge(enrollment.subjectCode)}
+                  <span className="text-xs text-muted-foreground">{enrollment.registrationType}</span>
+                </div>
+                <p className="mb-1 text-xs text-muted-foreground">Level hiện tại: {enrollment.currentLevel ?? '-'}</p>
+                <p className="text-xs text-muted-foreground">
+                  {(() => {
+                    const schedules = parseSerializedStudyDays(enrollment.studyDays, enrollment.classShift as ShiftOption);
+                    if (schedules.length === 0) {
+                      return enrollment.classGroup?.label ?? 'Chưa xếp lớp';
+                    }
+
+                    const labels = schedules.map((schedule) => {
+                      const mappedClass = classGroups.find((group) =>
+                        group.subjectCode === enrollment.subjectCode &&
+                        group.weekday === schedule.weekday &&
+                        group.classShift === schedule.shift
+                      );
+                      const shiftLabel = formatClassShiftByWeekday(schedule.weekday, schedule.shift as ClassShift);
+                      return mappedClass ? `${mappedClass.label} (${shiftLabel})` : `${schedule.weekday} (${shiftLabel})`;
+                    });
+
+                    return labels.join(' • ');
+                  })()}
+                </p>
+              </div>
+            )) : <p className="text-sm text-muted-foreground">Chưa có môn đăng ký.</p>}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StudentTable({
+  students,
+  selectedStudentId,
+  statusVariant,
+  showReportB,
+  showTrialCountdown,
+  onSelect,
+  getTrialDaysLeft,
+}: StudentTableProps) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Học viên</TableHead>
+          <TableHead>Ngày sinh</TableHead>
+          <TableHead>Phụ huynh</TableHead>
+          <TableHead>Môn học</TableHead>
+          <TableHead>Ngày nhập học</TableHead>
+          {showReportB ? <TableHead>Ngày Report B</TableHead> : null}
+          {showTrialCountdown ? <TableHead>Đếm ngược hạn</TableHead> : null}
+          <TableHead>Trạng thái</TableHead>
+          <TableHead>Địa chỉ</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {students.map((student) => {
+          const daysLeft = showTrialCountdown && getTrialDaysLeft ? getTrialDaysLeft(student) : null;
+          const isTrialExpiredByCountdown = showTrialCountdown && daysLeft !== null && daysLeft < 0;
+          const displayedStatus = isTrialExpiredByCountdown ? STATUS_EXPIRED : student.status;
+          return (
+            <TableRow
+              key={student.id}
+              onClick={() => onSelect(student.id)}
+              className={cn(
+                'cursor-pointer transition-colors hover:bg-slate-50/80',
+                selectedStudentId === student.id ? 'bg-slate-100/70' : ''
+              )}
+            >
+              <TableCell>
+                <div>
+                  <p className="font-semibold text-slate-950">{student.fullName}</p>
+                  <p className="text-xs text-muted-foreground">{student.gender}</p>
+                </div>
+              </TableCell>
+              <TableCell>{formatDate(student.birthDate ?? student.admissionDate)}</TableCell>
+              <TableCell>
+                <div>
+                  <p className="font-medium">Ba: {student.fatherFullName} - Me: {student.motherFullName}</p>
+                  <p className="text-xs text-muted-foreground flex items-center gap-2">
+                    <HoverTooltip
+                      content={(
+                        <span className="block leading-5">
+                          <span className="block">Ba: {student.fatherPhone || '-'}</span>
+                          <span className="block">Mẹ: {student.motherPhone || '-'}</span>
+                        </span>
+                      )}
+                    >
+                      <span
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-700"
+                        aria-label="Xem số điện thoại phụ huynh"
+                      >
+                        <PhoneCall className="h-3.5 w-3.5" />
+                      </span>
+                    </HoverTooltip>
+                  </p>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="space-y-1 text-sm">
+                  {student.enrollments.length
+                    ? student.enrollments.map((enrollment) => <div key={enrollment.id} className="rounded-lg bg-muted/30 px-2 py-1">{getSubjectBadge(enrollment.subjectCode)}</div>)
+                    : <span className="text-muted-foreground">Chua co mon</span>}
+                </div>
+              </TableCell>
+              <TableCell>{formatDate(student.admissionDate)}</TableCell>
+              {showReportB ? <TableCell>{student.reportBDate ? formatDate(student.reportBDate) : '-'}</TableCell> : null}
+              {showTrialCountdown ? (
+                <TableCell>
+                  {daysLeft !== null && daysLeft >= 0 ? (
+                    <Badge className="whitespace-nowrap" variant="warning">Con {daysLeft} ngay</Badge>
+                  ) : (
+                    <Badge className="whitespace-nowrap" variant="destructive">Qua han {Math.abs(daysLeft ?? 0)} ngay</Badge>
+                  )}
+                </TableCell>
+              ) : null}
+              <TableCell><Badge className="whitespace-nowrap" variant={displayedStatus === STATUS_EXPIRED ? 'destructive' : statusVariant}>{displayedStatus}</Badge></TableCell>
+              <TableCell>{student.address || '-'}</TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}

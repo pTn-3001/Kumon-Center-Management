@@ -1,0 +1,120 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Fraunces:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 39 44% 97%;
+    --foreground: 220 39% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 39% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 39% 11%;
+
+    --primary: 173 80% 30%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 40 42% 92%;
+    --secondary-foreground: 220 39% 11%;
+
+    --muted: 40 26% 94%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 173 45% 92%;
+    --accent-foreground: 173 72% 18%;
+
+    --destructive: 0 78% 55%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 22% 88%;
+    --input: 215 22% 88%;
+    --ring: 173 80% 30%;
+
+    --radius: 1rem;
+  }
+
+  .dark {
+    --background: 223 27% 9%;
+    --foreground: 210 40% 98%;
+
+    --card: 223 27% 11%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 223 27% 11%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 173 60% 40%;
+    --primary-foreground: 223 27% 9%;
+
+    --secondary: 223 21% 16%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 223 21% 16%;
+    --muted-foreground: 215 20% 66%;
+
+    --accent: 173 22% 18%;
+    --accent-foreground: 173 60% 80%;
+
+    --destructive: 0 68% 46%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 223 21% 18%;
+    --input: 223 21% 18%;
+    --ring: 173 60% 40%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Manrope', sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(44, 163, 157, 0.12), transparent 32%),
+      radial-gradient(circle at right center, rgba(202, 138, 4, 0.08), transparent 26%),
+      linear-gradient(180deg, #f9f7f1 0%, #f3f5f6 100%);
+  }
+
+  ::selection {
+    background: rgba(44, 163, 157, 0.28);
+    color: #0f2624;
+  }
+
+  h1,
+  h2,
+  h3,
+  .display-font {
+    font-family: 'Fraunces', serif;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply border border-white/60 bg-white/85 shadow-soft backdrop-blur;
+  }
+
+  .page-wrap {
+    @apply mx-auto w-full max-w-[1600px];
+  }
+
+  .section-title {
+    @apply text-sm font-semibold uppercase tracking-[0.18em] text-slate-500;
+  }
+
+  .panel {
+    @apply rounded-2xl border border-white/60 bg-white/90 shadow-soft;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto rounded-2xl border bg-white;
+  }
+}
