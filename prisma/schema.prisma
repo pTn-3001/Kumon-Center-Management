@@ -140,11 +140,11 @@ model Student {
   birthDate       DateTime?
   gender          Gender
   admissionDate   DateTime
-  fatherFullName  String        @default("Chưa cập nhật")
-  fatherPhone     String        @default("Chưa cập nhật")
-  motherFullName  String        @default("Chưa cập nhật")
-  motherPhone     String        @default("Chưa cập nhật")
-  address         String        @default("Chưa cập nhật")
+  fatherFullName  String?
+  fatherPhone     String?
+  motherFullName  String?
+  motherPhone     String?
+  address         String?
   status          StudentStatus @default(OFFICIAL)
   reportB         Boolean       @default(false)
   reportBDate     DateTime?

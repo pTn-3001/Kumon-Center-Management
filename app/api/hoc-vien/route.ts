@@ -108,8 +108,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const center = await ensureDefaultCenter();
 
-  if (!body.fullName || !body.fatherFullName || !body.fatherPhone || !body.motherFullName || !body.motherPhone || !body.address || !body.gender || !body.admissionDate) {
-    return NextResponse.json({ message: 'Thiếu thông tin học viên' }, { status: 400 });
+  if (!body.fullName || !body.gender || !body.admissionDate) {
+    return NextResponse.json({ message: 'Thiếu thông tin học viên (họ tên, giới tính, ngày nhập học)' }, { status: 400 });
   }
 
   const created = await prisma.student.create({
@@ -119,11 +119,11 @@ export async function POST(request: NextRequest) {
       birthDate: body.birthDate ? parseDateInput(body.birthDate) : null,
       gender: toGender(body.gender),
       admissionDate: parseDateInput(body.admissionDate),
-      fatherFullName: String(body.fatherFullName),
-      fatherPhone: String(body.fatherPhone),
-      motherFullName: String(body.motherFullName),
-      motherPhone: String(body.motherPhone),
-      address: String(body.address),
+      fatherFullName: body.fatherFullName ? String(body.fatherFullName) : null,
+      fatherPhone: body.fatherPhone ? String(body.fatherPhone) : null,
+      motherFullName: body.motherFullName ? String(body.motherFullName) : null,
+      motherPhone: body.motherPhone ? String(body.motherPhone) : null,
+      address: body.address ? String(body.address) : null,
       status: toStudentStatus(body.status),
       reportB: Boolean(body.reportB),
       reportBDate: body.reportBDate ? parseDateInput(body.reportBDate) : null,
@@ -142,8 +142,8 @@ export async function POST(request: NextRequest) {
   return NextResponse.json(
     {
       ...created,
-      parentName: `${created.fatherFullName} / ${created.motherFullName}`,
-      parentPhone: created.fatherPhone || created.motherPhone,
+      parentName: [created.fatherFullName, created.motherFullName].filter(Boolean).join(' / ') || null,
+      parentPhone: created.fatherPhone || created.motherPhone || null,
       birthDate: created.birthDate?.toISOString() ?? null,
       admissionDate: created.admissionDate.toISOString(),
       createdAt: created.createdAt.toISOString(),
