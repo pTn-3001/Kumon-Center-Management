@@ -41,6 +41,19 @@ services:
       - kumon_network
     restart: always
 
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: kumon_management_cloudflared
+    volumes:
+      - C:\Users\User\.cloudflared:/etc/cloudflared
+    command: tunnel run kumon
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - kumon_network
+    restart: always
+
 networks:
   kumon_network:
     driver: bridge
