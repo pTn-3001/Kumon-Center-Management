@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { Bell, CalendarDays } from 'lucide-react';
+import { Bell, CalendarDays, LogOut } from 'lucide-react';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -226,6 +226,7 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
                         onClick={() => void signOut()}
                         className="mt-1 w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
                       >
+                        <LogOut className="inline h-4 w-4 mr-2" />
                         Đăng xuất
                       </button>
                     </div>

@@ -64,8 +64,8 @@ export async function GET() {
   return NextResponse.json(
     students.map((student: any) => ({
       ...student,
-      parentName: `${student.fatherFullName} / ${student.motherFullName}`,
-      parentPhone: student.fatherPhone || student.motherPhone,
+      parentName: [student.fatherFullName, student.motherFullName].filter(Boolean).join(' / ') || null,
+      parentPhone: student.fatherPhone || student.motherPhone || null,
       birthDate: student.birthDate?.toISOString() ?? null,
       admissionDate: student.admissionDate.toISOString(),
       createdAt: student.createdAt.toISOString(),
@@ -82,6 +82,8 @@ export async function GET() {
         classShift: fromClassShift(enrollment.classShift),
         currentLevel: enrollment.currentLevel ?? null,
         startDate: enrollment.startDate.toISOString(),
+        reportBDate: enrollment.reportBDate?.toISOString() ?? null,
+        reenrollDate: enrollment.reenrollDate?.toISOString() ?? null,
         endDate: enrollment.endDate?.toISOString() ?? null,
         classGroup: enrollment.classGroup
           ? {

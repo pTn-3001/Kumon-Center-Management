@@ -186,6 +186,8 @@ model Enrollment {
   classShift       ClassShift
   currentLevel     String?
   startDate        DateTime
+  reportBDate      DateTime?
+  reenrollDate     DateTime?
   endDate          DateTime?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt

@@ -39,25 +39,60 @@ function fromClassShift(value: string) {
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const params = await context.params;
   const body = await request.json();
-  const updated = await prisma.enrollment.update({
-    where: { id: toNumber(params.id) },
-    data: {
-      studentId: body.studentId !== undefined ? toNumber(body.studentId) : undefined,
-      classGroupId: body.classGroupId !== undefined ? (body.classGroupId ? toNumber(body.classGroupId) : null) : undefined,
-      subjectCode: body.subjectCode !== undefined ? body.subjectCode : undefined,
-      registrationType: body.registrationType !== undefined ? toRegistrationType(body.registrationType) : undefined,
-      enrollmentType: body.enrollmentType !== undefined ? toEnrollmentType(body.enrollmentType) : undefined,
-      studyDays: body.studyDays !== undefined ? String(body.studyDays) : undefined,
-      classShift: body.classShift !== undefined ? toClassShift(body.classShift) : undefined,
-      currentLevel: body.currentLevel !== undefined ? (body.currentLevel ? String(body.currentLevel) : null) : undefined,
-      startDate: body.startDate !== undefined ? parseDateInput(body.startDate) : undefined,
-      endDate: body.endDate !== undefined ? (body.endDate ? parseDateInput(body.endDate) : null) : undefined,
-    },
-    include: {
-      student: { select: { id: true, fullName: true, status: true } },
-      classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
-    },
-  });
+  const updateDataBase = {
+    studentId: body.studentId !== undefined ? toNumber(body.studentId) : undefined,
+    classGroupId: body.classGroupId !== undefined ? (body.classGroupId ? toNumber(body.classGroupId) : null) : undefined,
+    subjectCode: body.subjectCode !== undefined ? body.subjectCode : undefined,
+    registrationType: body.registrationType !== undefined ? toRegistrationType(body.registrationType) : undefined,
+    enrollmentType: body.enrollmentType !== undefined ? toEnrollmentType(body.enrollmentType) : undefined,
+    studyDays: body.studyDays !== undefined ? String(body.studyDays) : undefined,
+    classShift: body.classShift !== undefined ? toClassShift(body.classShift) : undefined,
+    currentLevel: body.currentLevel !== undefined ? (body.currentLevel ? String(body.currentLevel) : null) : undefined,
+    startDate: body.startDate !== undefined ? parseDateInput(body.startDate) : undefined,
+    reenrollDate: body.reenrollDate !== undefined ? (body.reenrollDate ? parseDateInput(body.reenrollDate) : null) : undefined,
+    endDate: body.endDate !== undefined ? (body.endDate ? parseDateInput(body.endDate) : null) : undefined,
+  };
+
+  let updated: any;
+  try {
+    updated = await prisma.enrollment.update({
+      where: { id: toNumber(params.id) },
+      data: {
+        ...updateDataBase,
+        reportBDate: body.reportBDate !== undefined ? (body.reportBDate ? parseDateInput(body.reportBDate) : null) : undefined,
+      },
+      include: {
+        student: { select: { id: true, fullName: true, status: true } },
+        classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const hasUnknownReportB = message.includes('Unknown argument `reportBDate`');
+    const hasUnknownReenroll = message.includes('Unknown argument `reenrollDate`');
+    if (!hasUnknownReportB && !hasUnknownReenroll) {
+      throw error;
+    }
+
+    const fallbackBase: any = { ...updateDataBase };
+    if (hasUnknownReenroll) {
+      delete fallbackBase.reenrollDate;
+    }
+
+    updated = await prisma.enrollment.update({
+      where: { id: toNumber(params.id) },
+      data: hasUnknownReportB
+        ? fallbackBase
+        : {
+            ...fallbackBase,
+            reportBDate: body.reportBDate !== undefined ? (body.reportBDate ? parseDateInput(body.reportBDate) : null) : undefined,
+          },
+      include: {
+        student: { select: { id: true, fullName: true, status: true } },
+        classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
+      },
+    });
+  }
 
   return NextResponse.json({
     ...updated,
@@ -66,6 +101,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     enrollmentType: fromEnrollmentType(updated.enrollmentType),
     classShift: fromClassShift(updated.classShift),
     startDate: updated.startDate.toISOString(),
+    reportBDate: updated.reportBDate?.toISOString() ?? null,
+    reenrollDate: updated.reenrollDate?.toISOString() ?? null,
     endDate: updated.endDate?.toISOString() ?? null,
   });
 }

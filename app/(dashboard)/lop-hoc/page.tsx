@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BarChart, Bar, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -683,7 +683,8 @@ function ClassPageContent() {
                         {(() => {
                           const group = classGroupById.get(record.classGroupId);
                           if (!group) return record.classGroupLabel;
-                          return `${group.label} - ${formatClassShiftByWeekday(group.weekday, group.classShift as ClassShift)}`;
+                          const shiftLabel = formatClassShiftByWeekday(group.weekday, group.classShift as ClassShift);
+                          return group.label.includes(shiftLabel) ? group.label : `${group.label} - ${shiftLabel}`;
                         })()}
                       </TableCell>
                       <TableCell>{record.studentName}</TableCell>
@@ -697,7 +698,7 @@ function ClassPageContent() {
                       </TableCell>
                       <TableCell className="text-right">
                         <Button size="sm" variant="destructive" onClick={() => void deleteAttendance(record.id)}>
-                          Xóa
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </TableCell>
                     </TableRow>

@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { addYears, differenceInCalendarDays, parseISO, startOfDay } from 'date-fns';
 import { useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign } from 'lucide-react';
+import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign, Save, FolderPlus, GraduationCap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,13 +27,13 @@ type ApiStudent = {
   birthDate: string | null;
   gender: Gender;
   admissionDate: string;
-  fatherFullName: string;
-  fatherPhone: string;
-  motherFullName: string;
-  motherPhone: string;
-  parentName: string;
-  parentPhone: string;
-  address: string;
+  fatherFullName: string | null;
+  fatherPhone: string | null;
+  motherFullName: string | null;
+  motherPhone: string | null;
+  parentName: string | null;
+  parentPhone: string | null;
+  address: string | null;
   status: StudentStatus;
   reportBDate: string | null;
   assignedStaffId: number | null;
@@ -47,6 +47,8 @@ type ApiStudent = {
     studyDays: string;
     classShift: 'Ca 1' | 'Ca 2' | 'Ca 3' | 'Ca 4' | 'Ca 5';
     startDate: string;
+    reportBDate: string | null;
+    reenrollDate: string | null;
     endDate: string | null;
     classGroup: { id: number; label: string; weekday: string; classShift: string } | null;
   }>;
@@ -88,6 +90,7 @@ type AdmissionRegistrationType = 'Chinh thuc' | 'Hoc thu';
 type IntakeSource = 'transfer' | 'new';
 type ShiftOption = 'Ca 1' | 'Ca 2' | 'Ca 3' | 'Ca 4' | 'Ca 5';
 type PaymentMethod = 'Tiền mặt' | 'Chuyển khoản';
+type OfficialAdmissionMode = 'all' | 'subjects';
 
 type SubjectAssignmentValue = {
   enrollmentId: number;
@@ -128,11 +131,13 @@ const FIXED_CLASSES: Array<{ subjectCode: SubjectCode; weekday: Weekday; name: s
   { subjectCode: 'EFL', weekday: 'T7', name: 'Tiếng Anh - Thứ Bảy' },
 ];
 
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
+
 const emptyForm = {
   fullName: '',
   birthDate: '',
   gender: GENDER_MALE,
-  admissionDate: new Date().toISOString().slice(0, 10),
+  admissionDate: TODAY_ISO,
   fatherFullName: '',
   fatherPhone: '',
   motherFullName: '',
@@ -185,6 +190,22 @@ function parseSerializedStudyDays(studyDays: string, fallbackShift: ShiftOption)
   return result;
 }
 
+function isEnrollmentActive(enrollment: { endDate: string | null; reenrollDate: string | null }) {
+  if (!enrollment.endDate) {
+    return true;
+  }
+
+  if (!enrollment.reenrollDate) {
+    return false;
+  }
+
+  return parseISO(enrollment.reenrollDate).getTime() > parseISO(enrollment.endDate).getTime();
+}
+
+function isEnrollmentDropped(enrollment: { endDate: string | null; reenrollDate: string | null }) {
+  return Boolean(enrollment.endDate) && !isEnrollmentActive(enrollment);
+}
+
 function StudentsPageContent() {
   const searchParams = useSearchParams();
 
@@ -209,16 +230,19 @@ function StudentsPageContent() {
     fullName: '',
     birthDate: '',
     gender: GENDER_MALE as Gender,
-    admissionDate: new Date().toISOString().slice(0, 10),
-    reportBDate: '',
     fatherFullName: '',
     fatherPhone: '',
     motherFullName: '',
     motherPhone: '',
     address: '',
   });
+  const [editEnrollmentIds, setEditEnrollmentIds] = useState<Partial<Record<SubjectCode, number>>>({});
+  const [editSubjectAdmissionDates, setEditSubjectAdmissionDates] = useState<Partial<Record<SubjectCode, string>>>({});
+  const [editSubjectReportBDates, setEditSubjectReportBDates] = useState<Partial<Record<SubjectCode, string>>>({});
   const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
   const [selectedSubjects, setSelectedSubjects] = useState<SubjectCode[]>(['MATH']);
+  const [subjectAdmissionDates, setSubjectAdmissionDates] = useState<Partial<Record<SubjectCode, string>>>({ MATH: TODAY_ISO });
+  const [subjectReportBDates, setSubjectReportBDates] = useState<Partial<Record<SubjectCode, string>>>({});
   const [admissionRegistrationType, setAdmissionRegistrationType] = useState<AdmissionRegistrationType>('Chinh thuc');
   const [officialIntakeSource, setOfficialIntakeSource] = useState<IntakeSource>('new');
   const [admissionFeePaid, setAdmissionFeePaid] = useState(false);
@@ -240,6 +264,19 @@ function StudentsPageContent() {
   const [reenrollStudent, setReenrollStudent] = useState<ApiStudent | null>(null);
   const [reenrollDate, setReenrollDate] = useState(new Date().toISOString().slice(0, 10));
   const [reenrollSubject, setReenrollSubject] = useState<SubjectCode>('MATH');
+  const [addSubjectOpen, setAddSubjectOpen] = useState(false);
+  const [addSubjectStudent, setAddSubjectStudent] = useState<ApiStudent | null>(null);
+  const [addSubjectCode, setAddSubjectCode] = useState<SubjectCode>('EFL');
+  const [addSubjectStartDate, setAddSubjectStartDate] = useState(TODAY_ISO);
+  const [addSubjectReportBDate, setAddSubjectReportBDate] = useState('');
+  const [addSubjectRegistrationType, setAddSubjectRegistrationType] = useState<AdmissionRegistrationType>('Chinh thuc');
+  const [savingAddSubject, setSavingAddSubject] = useState(false);
+  const [officialAdmissionOpen, setOfficialAdmissionOpen] = useState(false);
+  const [officialAdmissionStudent, setOfficialAdmissionStudent] = useState<ApiStudent | null>(null);
+  const [officialAdmissionDate, setOfficialAdmissionDate] = useState(TODAY_ISO);
+  const [officialAdmissionMode, setOfficialAdmissionMode] = useState<OfficialAdmissionMode>('all');
+  const [officialAdmissionSubjects, setOfficialAdmissionSubjects] = useState<SubjectCode[]>([]);
+  const [savingOfficialAdmission, setSavingOfficialAdmission] = useState(false);
   const [tuitionDialogOpen, setTuitionDialogOpen] = useState(false);
   const [tuitionStudent, setTuitionStudent] = useState<ApiStudent | null>(null);
   const [selectedPaymentMonths, setSelectedPaymentMonths] = useState<string[]>([]);
@@ -311,6 +348,13 @@ function StudentsPageContent() {
 
         if (Array.isArray(lead.preferredSubjects) && lead.preferredSubjects.length > 0) {
           setSelectedSubjects(lead.preferredSubjects);
+          setSubjectAdmissionDates((current) => {
+            const next = { ...current };
+            lead.preferredSubjects.forEach((subject) => {
+              next[subject] = next[subject] ?? TODAY_ISO;
+            });
+            return next;
+          });
         }
 
         setPrefilledLeadId(lead.id);
@@ -330,17 +374,17 @@ function StudentsPageContent() {
       .filter((s) => s.status === STATUS_OFFICIAL)
       .map((student) => ({
         ...student,
-        enrollments: student.enrollments.filter((enrollment) => !enrollment.endDate),
+        enrollments: student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment)),
       })),
     [students]
   );
   const leaveStudents = useMemo(
     () => students
-      .filter((student) => student.enrollments.some((enrollment) => Boolean(enrollment.endDate)))
+      .filter((student) => student.enrollments.some((enrollment) => isEnrollmentDropped(enrollment)))
       .map((student) => ({
         ...student,
         status: STATUS_DROPPED,
-        enrollments: student.enrollments.filter((enrollment) => Boolean(enrollment.endDate)),
+        enrollments: student.enrollments.filter((enrollment) => isEnrollmentDropped(enrollment)),
       })),
     [students]
   );
@@ -349,27 +393,34 @@ function StudentsPageContent() {
       .filter((s) => s.status === STATUS_TRIAL || s.status === STATUS_EXPIRED)
       .map((student) => ({
         ...student,
-        enrollments: student.enrollments.filter((enrollment) => !enrollment.endDate),
+        enrollments: student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment)),
       })),
     [students]
   );
 
   const matchesSearch = useCallback((student: ApiStudent) => (
-    search.length === 0 ||
-    student.fullName.toLowerCase().includes(search.toLowerCase()) ||
-    student.fatherFullName.toLowerCase().includes(search.toLowerCase()) ||
-    student.motherFullName.toLowerCase().includes(search.toLowerCase()) ||
-    student.fatherPhone.includes(search) ||
-    student.motherPhone.includes(search)
+    search.trim().length === 0 ||
+    student.fullName.toLowerCase().includes(search.trim().toLowerCase()) ||
+    (student.fatherFullName ?? '').toLowerCase().includes(search.trim().toLowerCase()) ||
+    (student.motherFullName ?? '').toLowerCase().includes(search.trim().toLowerCase()) ||
+    (student.fatherPhone ?? '').includes(search.trim()) ||
+    (student.motherPhone ?? '').includes(search.trim())
   ), [search]);
 
   const matchesReportBMonth = useCallback((student: ApiStudent) => {
     if (reportBMonthFilter === 'all' && reportBYearFilter === 'all') return true;
-    if (!student.reportBDate) return false;
-    const reportBDate = parseISO(student.reportBDate);
-    const monthOk = reportBMonthFilter === 'all' || reportBDate.getMonth() + 1 === Number(reportBMonthFilter);
-    const yearOk = reportBYearFilter === 'all' || reportBDate.getFullYear() === Number(reportBYearFilter);
-    return monthOk && yearOk;
+    const subjectReportDates = student.enrollments
+      .map((enrollment) => enrollment.reportBDate)
+      .filter((value): value is string => Boolean(value));
+    const candidateDates = student.reportBDate ? [student.reportBDate, ...subjectReportDates] : subjectReportDates;
+    if (candidateDates.length === 0) return false;
+
+    return candidateDates.some((dateValue) => {
+      const reportBDate = parseISO(dateValue);
+      const monthOk = reportBMonthFilter === 'all' || reportBDate.getMonth() + 1 === Number(reportBMonthFilter);
+      const yearOk = reportBYearFilter === 'all' || reportBDate.getFullYear() === Number(reportBYearFilter);
+      return monthOk && yearOk;
+    });
   }, [reportBMonthFilter, reportBYearFilter]);
 
   const reportBYears = useMemo(() => {
@@ -377,6 +428,10 @@ function StudentsPageContent() {
     students.forEach((student) => {
       if (!student.reportBDate) return;
       years.add(parseISO(student.reportBDate).getFullYear());
+      student.enrollments.forEach((enrollment) => {
+        if (!enrollment.reportBDate) return;
+        years.add(parseISO(enrollment.reportBDate).getFullYear());
+      });
     });
 
     return Array.from(years).sort((a, b) => b - a);
@@ -466,7 +521,7 @@ function StudentsPageContent() {
 
   const handleRegisterOfficialFromPanel = (student: ApiStudent) => {
     closeStudentPanel();
-    void registerOfficial(student);
+    openOfficialAdmissionDialog(student);
   };
 
   async function updateStudentStatus(studentId: number, status: StudentStatus) {
@@ -582,7 +637,7 @@ function StudentsPageContent() {
     return officialStudents
       .filter((student) => student.enrollments.length > 0)
       .map((student) => {
-        const activeEnrollments = student.enrollments.filter((enrollment) => !enrollment.endDate);
+        const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
         const subjectCount = Math.max(1, activeEnrollments.length || student.enrollments.length);
         const paid = paidMap.has(`${student.id}-${selectedFilterMonthKey}`);
         return {
@@ -606,7 +661,7 @@ function StudentsPageContent() {
       return 0;
     }
 
-    const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+    const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
     const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
     return subjectCount * selectedPaymentMonths.length * TUITION_PER_SUBJECT_PER_MONTH;
   }, [selectedPaymentMonths.length, tuitionStudent]);
@@ -655,27 +710,58 @@ function StudentsPageContent() {
   function toggleSubject(subjectCode: SubjectCode, checked: boolean) {
     setSelectedSubjects((current) => {
       if (checked) {
+        setSubjectAdmissionDates((dateMap) => ({
+          ...dateMap,
+          [subjectCode]: dateMap[subjectCode] ?? form.admissionDate ?? TODAY_ISO,
+        }));
         return current.includes(subjectCode) ? current : [...current, subjectCode];
       }
       if (current.length === 1) return current;
+      setSubjectAdmissionDates((dateMap) => {
+        const next = { ...dateMap };
+        delete next[subjectCode];
+        return next;
+      });
+      setSubjectReportBDates((dateMap) => {
+        const next = { ...dateMap };
+        delete next[subjectCode];
+        return next;
+      });
       return current.filter((subject) => subject !== subjectCode);
     });
   }
 
   function startEdit(student: ApiStudent) {
+    const enrollmentIds: Partial<Record<SubjectCode, number>> = {};
+    const subjectAdmissions: Partial<Record<SubjectCode, string>> = {};
+    const subjectReportBs: Partial<Record<SubjectCode, string>> = {};
+
+    student.enrollments.forEach((enrollment) => {
+      if (!enrollmentIds[enrollment.subjectCode]) {
+        enrollmentIds[enrollment.subjectCode] = enrollment.id;
+      }
+      if (!subjectAdmissions[enrollment.subjectCode]) {
+        subjectAdmissions[enrollment.subjectCode] = enrollment.startDate.slice(0, 10);
+      }
+      if (!subjectReportBs[enrollment.subjectCode] && enrollment.reportBDate) {
+        subjectReportBs[enrollment.subjectCode] = enrollment.reportBDate.slice(0, 10);
+      }
+    });
+
     setEditingStudentId(student.id);
     setEditForm({
       fullName: student.fullName,
       birthDate: student.birthDate ? student.birthDate.slice(0, 10) : '',
       gender: student.gender,
-      admissionDate: student.admissionDate.slice(0, 10),
-      reportBDate: student.reportBDate ? student.reportBDate.slice(0, 10) : '',
-      fatherFullName: student.fatherFullName,
-      fatherPhone: student.fatherPhone,
-      motherFullName: student.motherFullName,
-      motherPhone: student.motherPhone,
-      address: student.address,
+      fatherFullName: student.fatherFullName ?? '',
+      fatherPhone: student.fatherPhone ?? '',
+      motherFullName: student.motherFullName ?? '',
+      motherPhone: student.motherPhone ?? '',
+      address: student.address ?? '',
     });
+    setEditEnrollmentIds(enrollmentIds);
+    setEditSubjectAdmissionDates(subjectAdmissions);
+    setEditSubjectReportBDates(subjectReportBs);
     setEditOpen(true);
   }
 
@@ -685,6 +771,12 @@ function StudentsPageContent() {
     }
 
     try {
+      const activeSubjectAdmissions = Object.values(editSubjectAdmissionDates).filter((value): value is string => Boolean(value));
+      const admissionDate = activeSubjectAdmissions.sort((a, b) => a.localeCompare(b))[0] ?? TODAY_ISO;
+
+      const activeSubjectReportB = Object.values(editSubjectReportBDates).filter((value): value is string => Boolean(value));
+      const studentReportBDate = activeSubjectReportB.sort((a, b) => a.localeCompare(b))[0] ?? null;
+
       const response = await fetch(`/api/hoc-vien/${editingStudentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -692,9 +784,9 @@ function StudentsPageContent() {
           fullName: editForm.fullName,
           birthDate: editForm.birthDate || null,
           gender: editForm.gender,
-          admissionDate: editForm.admissionDate,
-          reportB: Boolean(editForm.reportBDate),
-          reportBDate: editForm.reportBDate || null,
+          admissionDate,
+          reportB: Boolean(studentReportBDate),
+          reportBDate: studentReportBDate,
           fatherFullName: editForm.fatherFullName,
           fatherPhone: editForm.fatherPhone,
           motherFullName: editForm.motherFullName,
@@ -707,8 +799,31 @@ function StudentsPageContent() {
         throw new Error('Không thể cập nhật thông tin học viên');
       }
 
+      const enrollmentUpdateRequests = (Object.keys(editEnrollmentIds) as SubjectCode[])
+        .filter((subjectCode) => Boolean(editEnrollmentIds[subjectCode]))
+        .map((subjectCode) =>
+          fetch(`/api/enrollments/${editEnrollmentIds[subjectCode]}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              startDate: editSubjectAdmissionDates[subjectCode] || admissionDate,
+              reportBDate: editSubjectReportBDates[subjectCode] || null,
+            }),
+          })
+        );
+
+      if (enrollmentUpdateRequests.length > 0) {
+        const enrollmentResponses = await Promise.all(enrollmentUpdateRequests);
+        if (enrollmentResponses.some((item) => !item.ok)) {
+          throw new Error('Không thể cập nhật ngày nhập học/Report B theo môn');
+        }
+      }
+
       setEditOpen(false);
       setEditingStudentId(null);
+      setEditEnrollmentIds({});
+      setEditSubjectAdmissionDates({});
+      setEditSubjectReportBDates({});
       await refreshStudents();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi khi cập nhật học viên');
@@ -731,7 +846,7 @@ function StudentsPageContent() {
     }
 
     try {
-      const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+      const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
       const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
       const monthlyAmount = subjectCount * TUITION_PER_SUBJECT_PER_MONTH;
 
@@ -801,10 +916,10 @@ function StudentsPageContent() {
   }
 
   function openDropoutDialog(student: ApiStudent) {
-    const activeEnrollments = student.enrollments.filter((enrollment) => !enrollment.endDate);
+    const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
     const firstSubject = activeEnrollments[0]?.subjectCode ?? 'MATH';
     const initialIds = student.enrollments
-      .filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === firstSubject)
+      .filter((enrollment) => isEnrollmentActive(enrollment) && enrollment.subjectCode === firstSubject)
       .map((enrollment) => enrollment.id);
 
     setDropoutStudent(student);
@@ -819,7 +934,7 @@ function StudentsPageContent() {
     const availableSubjects = Array.from(
       new Set(
         student.enrollments
-          .filter((enrollment) => Boolean(enrollment.endDate))
+          .filter((enrollment) => isEnrollmentDropped(enrollment))
           .map((enrollment) => enrollment.subjectCode)
       )
     );
@@ -828,6 +943,82 @@ function StudentsPageContent() {
     setReenrollDate(new Date().toISOString().slice(0, 10));
     setReenrollSubject(availableSubjects[0] ?? 'MATH');
     setReenrollOpen(true);
+  }
+
+  function openAddSubjectDialog(student: ApiStudent) {
+    const activeSubjects = new Set(
+      student.enrollments
+        .filter((enrollment) => isEnrollmentActive(enrollment))
+        .map((enrollment) => enrollment.subjectCode)
+    );
+
+    const candidate = SUBJECT_OPTIONS.find((subject) => !activeSubjects.has(subject));
+    if (!candidate) {
+      setError('Học viên đã đăng ký đủ 2 môn đang hoạt động.');
+      return;
+    }
+
+    setAddSubjectStudent(student);
+    setAddSubjectCode(candidate);
+    setAddSubjectStartDate(TODAY_ISO);
+    setAddSubjectReportBDate('');
+    setAddSubjectRegistrationType(student.status === STATUS_TRIAL ? 'Hoc thu' : 'Chinh thuc');
+    setAddSubjectOpen(true);
+  }
+
+  async function submitAddSubject() {
+    if (!addSubjectStudent) return;
+
+    try {
+      setSavingAddSubject(true);
+      const existingEnrollment = addSubjectStudent.enrollments.find((enrollment) => enrollment.subjectCode === addSubjectCode) ?? null;
+
+      if (existingEnrollment?.endDate) {
+        const response = await fetch(`/api/enrollments/${existingEnrollment.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            registrationType: addSubjectRegistrationType,
+            startDate: addSubjectStartDate,
+            reportBDate: addSubjectReportBDate || null,
+            endDate: null,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Không thể mở lại môn học đã từng nghỉ');
+        }
+      } else {
+        const response = await fetch('/api/enrollments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentId: addSubjectStudent.id,
+            classGroupId: null,
+            subjectCode: addSubjectCode,
+            registrationType: addSubjectRegistrationType,
+            enrollmentType: '2 buổi/tuần',
+            studyDays: 'T2',
+            classShift: 'Ca 1',
+            startDate: addSubjectStartDate,
+            reportBDate: addSubjectReportBDate || null,
+            endDate: null,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Không thể đăng ký môn học mới');
+        }
+      }
+
+      setAddSubjectOpen(false);
+      setAddSubjectStudent(null);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi thêm môn học');
+    } finally {
+      setSavingAddSubject(false);
+    }
   }
 
   function getTrialDaysLeft(student: ApiStudent) {
@@ -934,6 +1125,23 @@ function StudentsPageContent() {
         throw new Error('Vui lòng chọn ít nhất 1 môn học');
       }
 
+      const missingAdmissionDate = selectedSubjects.find((subject) => !subjectAdmissionDates[subject]);
+      if (missingAdmissionDate) {
+        throw new Error(`Vui lòng nhập ngày nhập học cho môn ${missingAdmissionDate === 'MATH' ? 'Toán' : 'Tiếng Anh'}`);
+      }
+
+      const orderedAdmissionDates = selectedSubjects
+        .map((subject) => subjectAdmissionDates[subject])
+        .filter((value): value is string => Boolean(value))
+        .sort((a, b) => a.localeCompare(b));
+      const studentAdmissionDate = orderedAdmissionDates[0] ?? form.admissionDate ?? TODAY_ISO;
+
+      const orderedReportBDates = selectedSubjects
+        .map((subject) => subjectReportBDates[subject])
+        .filter((value): value is string => Boolean(value))
+        .sort((a, b) => a.localeCompare(b));
+      const defaultReportBDate = orderedReportBDates[0] ?? null;
+
       if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && !admissionFeePaid) {
         throw new Error('Vui lòng xác nhận đã đóng phí nhập học 300.000đ');
       }
@@ -942,8 +1150,10 @@ function StudentsPageContent() {
       const payload = {
         ...form,
         status: statusFromAdmission,
+        admissionDate: studentAdmissionDate,
         birthDate: form.birthDate || null,
-        reportB: false,
+        reportB: Boolean(defaultReportBDate),
+        reportBDate: defaultReportBDate,
         assignedStaffId: form.assignedStaffId ? Number(form.assignedStaffId) : null,
         intakeSource: statusFromAdmission === STATUS_OFFICIAL ? officialIntakeSource : null,
         admissionFeePaid: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeePaid : false,
@@ -976,7 +1186,8 @@ function StudentsPageContent() {
                 enrollmentType: '2 buổi/tuần',
                 studyDays: 'T2',
                 classShift: 'Ca 1',
-                startDate: form.admissionDate,
+                startDate: subjectAdmissionDates[subjectCode] ?? studentAdmissionDate,
+                reportBDate: subjectReportBDates[subjectCode] || null,
                 endDate: null,
               }),
             })
@@ -1017,6 +1228,8 @@ function StudentsPageContent() {
 
       setForm(emptyForm);
       setSelectedSubjects(['MATH']);
+      setSubjectAdmissionDates({ MATH: TODAY_ISO });
+      setSubjectReportBDates({});
       setAdmissionRegistrationType('Chinh thuc');
       setOfficialIntakeSource('new');
       setAdmissionFeePaid(false);
@@ -1040,10 +1253,70 @@ function StudentsPageContent() {
     }
   }
 
+  function openOfficialAdmissionDialog(student: ApiStudent) {
+    const trialLikeSubjects = Array.from(
+      new Set(
+        student.enrollments
+          .filter((enrollment) => isEnrollmentActive(enrollment))
+          .filter((enrollment) => enrollment.registrationType === 'Học thử' || student.status === STATUS_EXPIRED || student.status === STATUS_TRIAL)
+          .map((enrollment) => enrollment.subjectCode)
+      )
+    );
+
+    setOfficialAdmissionStudent(student);
+    setOfficialAdmissionDate(TODAY_ISO);
+    setOfficialAdmissionMode('all');
+    setOfficialAdmissionSubjects(trialLikeSubjects);
+    setOfficialAdmissionOpen(true);
+  }
+
+  async function submitOfficialAdmission() {
+    if (!officialAdmissionStudent) return;
+
+    try {
+      setSavingOfficialAdmission(true);
+      const activeEnrollments = officialAdmissionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
+      const targetEnrollments = officialAdmissionMode === 'all'
+        ? activeEnrollments
+        : activeEnrollments.filter((enrollment) => officialAdmissionSubjects.includes(enrollment.subjectCode));
+
+      if (targetEnrollments.length === 0) {
+        throw new Error('Vui lòng chọn ít nhất 1 môn để nhập học chính thức');
+      }
+
+      await Promise.all(
+        targetEnrollments.map((enrollment) =>
+          updateEnrollment(enrollment.id, {
+            registrationType: 'Chinh thuc',
+            startDate: officialAdmissionDate,
+          })
+        )
+      );
+
+      const remainingTrialEnrollments = activeEnrollments.filter((enrollment) =>
+        !targetEnrollments.some((target) => target.id === enrollment.id)
+      );
+
+      await updateStudentStatus(
+        officialAdmissionStudent.id,
+        remainingTrialEnrollments.length === 0 ? STATUS_OFFICIAL : STATUS_TRIAL
+      );
+
+      setOfficialAdmissionOpen(false);
+      setOfficialAdmissionStudent(null);
+      setOfficialAdmissionSubjects([]);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Không thể xử lý nhập học chính thức');
+    } finally {
+      setSavingOfficialAdmission(false);
+    }
+  }
+
   async function submitDropout() {
     if (!dropoutStudent) return;
     try {
-      const activeEnrollments = dropoutStudent.enrollments.filter((enrollment) => !enrollment.endDate);
+      const activeEnrollments = dropoutStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
       const targetIds = dropoutMode === 'all'
         ? activeEnrollments.map((enrollment) => enrollment.id)
         : activeEnrollments
@@ -1075,7 +1348,7 @@ function StudentsPageContent() {
     if (!reenrollStudent) return;
     try {
       const targetIds = reenrollStudent.enrollments
-        .filter((enrollment) => Boolean(enrollment.endDate) && enrollment.subjectCode === reenrollSubject)
+        .filter((enrollment) => isEnrollmentDropped(enrollment) && enrollment.subjectCode === reenrollSubject)
         .map((enrollment) => enrollment.id);
 
       if (targetIds.length === 0) {
@@ -1085,9 +1358,8 @@ function StudentsPageContent() {
       await Promise.all(
         targetIds.map((enrollmentId) =>
           updateEnrollment(enrollmentId, {
-            // Keep original student admission date unchanged; this is rejoin date for statistics.
-            startDate: reenrollDate,
-            endDate: null,
+            // Keep original subject start/report-B unchanged and store rejoin date for statistics.
+            reenrollDate,
             registrationType: 'Chinh thuc',
           })
         )
@@ -1138,18 +1410,12 @@ function StudentsPageContent() {
                   <div className="space-y-2 md:col-span-2"><Label>Họ tên</Label><Input value={form.fullName} onChange={(e) => setForm((current) => ({ ...current, fullName: e.target.value }))} /></div>
                   <div className="space-y-2"><Label>Ngày sinh</Label><Input type="date" value={form.birthDate} onChange={(e) => setForm((current) => ({ ...current, birthDate: e.target.value }))} /></div>
                   <div className="space-y-2"><Label>Giới tính</Label><Select value={form.gender} onValueChange={(value) => setForm((current) => ({ ...current, gender: value as Gender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={GENDER_MALE}>Nam</SelectItem><SelectItem value={GENDER_FEMALE}>Nữ</SelectItem><SelectItem value={GENDER_OTHER}>Khác</SelectItem></SelectContent></Select></div>
-                  <div className="space-y-2"><Label>Ngày nhập học</Label><Input type="date" value={form.admissionDate} onChange={(e) => setForm((current) => ({ ...current, admissionDate: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>Địa chỉ</Label><Input value={form.address} onChange={(e) => setForm((current) => ({ ...current, address: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>Họ tên bố</Label><Input value={form.fatherFullName} onChange={(e) => setForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>SĐT bố</Label><Input value={form.fatherPhone} onChange={(e) => setForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={form.motherFullName} onChange={(e) => setForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={form.motherPhone} onChange={(e) => setForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
 
                   <div className="space-y-2 md:col-span-2">
                     <Label>Môn học đăng ký</Label>
-                    <div className="grid gap-2 rounded-xl border p-3 sm:grid-cols-2">
+                    <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2">
                       {SUBJECT_OPTIONS.map((subject) => (
-                        <label key={subject} className="flex items-center gap-2 text-sm">
+                        <label key={subject} className="flex items-center gap-2 rounded-lg border border-transparent px-2 py-2 text-sm hover:border-slate-200 hover:bg-white">
                           <input
                             type="checkbox"
                             checked={selectedSubjects.includes(subject)}
@@ -1161,6 +1427,31 @@ function StudentsPageContent() {
                     </div>
                   </div>
 
+                  {selectedSubjects.map((subject) => (
+                    <div key={`subject-date-${subject}`} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 md:col-span-2">
+                      <p className="text-sm font-semibold text-slate-900">{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Ngày nhập học môn {subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</Label>
+                          <Input
+                            type="date"
+                            value={subjectAdmissionDates[subject] ?? ''}
+                            onChange={(e) => setSubjectAdmissionDates((current) => ({ ...current, [subject]: e.target.value }))}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Ngày Report B môn {subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</Label>
+                          <Input
+                            type="date"
+                            value={subjectReportBDates[subject] ?? ''}
+                            onChange={(e) => setSubjectReportBDates((current) => ({ ...current, [subject]: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="space-y-2"><Label>Địa chỉ</Label><Input value={form.address} onChange={(e) => setForm((current) => ({ ...current, address: e.target.value }))} /></div>
                   <div className="space-y-2">
                     <Label>Loại đăng ký</Label>
                     <Select value={admissionRegistrationType} onValueChange={(value) => setAdmissionRegistrationType(value as AdmissionRegistrationType)}>
@@ -1171,6 +1462,11 @@ function StudentsPageContent() {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  <div className="space-y-2"><Label>Họ tên bố</Label><Input value={form.fatherFullName} onChange={(e) => setForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>SĐT bố</Label><Input value={form.fatherPhone} onChange={(e) => setForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={form.motherFullName} onChange={(e) => setForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
+                  <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={form.motherPhone} onChange={(e) => setForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
 
                   {admissionRegistrationType === 'Chinh thuc' ? (
                     <>
@@ -1390,6 +1686,7 @@ function StudentsPageContent() {
                 showReportB
                 onEdit={handleEditFromPanel}
                 onAssign={handleAssignFromPanel}
+                onAddSubject={openAddSubjectDialog}
                 extraActionLabel="Thôi học"
                 onExtraAction={handleDropoutFromPanel}
               />
@@ -1405,7 +1702,7 @@ function StudentsPageContent() {
             <button type="button" className="fixed inset-0 z-[90] bg-slate-900/25" onClick={closeStudentPanel} aria-label="Đóng" />
             <aside className="fixed inset-y-0 right-0 z-[100] h-dvh w-full max-w-md overflow-y-auto border-l bg-white p-5 shadow-2xl">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
+                <p className="text-lg uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
                 <Button type="button" variant="outline" size="icon" onClick={closeStudentPanel}><X className="h-4 w-4" /></Button>
               </div>
               <StudentDetailPanel
@@ -1430,7 +1727,7 @@ function StudentsPageContent() {
             <button type="button" className="fixed inset-0 z-[90] bg-slate-900/25" onClick={closeStudentPanel} aria-label="Đóng" />
             <aside className="fixed inset-y-0 right-0 z-[100] h-dvh w-full max-w-md overflow-y-auto border-l bg-white p-5 shadow-2xl">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
+                <p className="text-lg uppercase tracking-[0.2em] text-slate-500">Chi tiết học viên</p>
                 <Button type="button" variant="outline" size="icon" onClick={closeStudentPanel}><X className="h-4 w-4" /></Button>
               </div>
               <StudentDetailPanel
@@ -1608,28 +1905,59 @@ function StudentsPageContent() {
       </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[86vh] overflow-hidden sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Chỉnh sửa thông tin học viên</DialogTitle>
             <DialogDescription>Chỉ cập nhật thông tin cá nhân hiện tại của học viên.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2"><Label>Họ tên</Label><Input value={editForm.fullName} onChange={(e) => setEditForm((current) => ({ ...current, fullName: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Ngày sinh</Label><Input type="date" value={editForm.birthDate} onChange={(e) => setEditForm((current) => ({ ...current, birthDate: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Giới tính</Label><Select value={editForm.gender} onValueChange={(value) => setEditForm((current) => ({ ...current, gender: value as Gender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={GENDER_MALE}>Nam</SelectItem><SelectItem value={GENDER_FEMALE}>Nữ</SelectItem><SelectItem value={GENDER_OTHER}>Khác</SelectItem></SelectContent></Select></div>
-            <div className="space-y-2"><Label>Ngày nhập học</Label><Input type="date" value={editForm.admissionDate} onChange={(e) => setEditForm((current) => ({ ...current, admissionDate: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Report B</Label><Input type="date" value={editForm.reportBDate} onChange={(e) => setEditForm((current) => ({ ...current, reportBDate: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Họ tên ba</Label><Input value={editForm.fatherFullName} onChange={(e) => setEditForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>SĐT ba</Label><Input value={editForm.fatherPhone} onChange={(e) => setEditForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={editForm.motherFullName} onChange={(e) => setEditForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={editForm.motherPhone} onChange={(e) => setEditForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
-            <div className="space-y-2 md:col-span-2"><Label>Địa chỉ</Label><Input value={editForm.address} onChange={(e) => setEditForm((current) => ({ ...current, address: e.target.value }))} /></div>
+          <div className="max-h-[64vh] space-y-4 overflow-y-auto pr-1">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2 md:col-span-2"><Label>Họ tên</Label><Input value={editForm.fullName} onChange={(e) => setEditForm((current) => ({ ...current, fullName: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Ngày sinh</Label><Input type="date" value={editForm.birthDate} onChange={(e) => setEditForm((current) => ({ ...current, birthDate: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Giới tính</Label><Select value={editForm.gender} onValueChange={(value) => setEditForm((current) => ({ ...current, gender: value as Gender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value={GENDER_MALE}>Nam</SelectItem><SelectItem value={GENDER_FEMALE}>Nữ</SelectItem><SelectItem value={GENDER_OTHER}>Khác</SelectItem></SelectContent></Select></div>
+            </div>
+
+            {(Object.keys(editEnrollmentIds) as SubjectCode[]).length > 0 ? (
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
+                <p className="text-sm font-semibold text-slate-900">Mốc thời gian nhập học</p>
+                <div className="grid gap-2">
+                  {(Object.keys(editEnrollmentIds) as SubjectCode[]).map((subjectCode) => (
+                    <div key={`edit-${subjectCode}`} className="grid items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2 md:grid-cols-[120px_1fr_1fr]">
+                      <span className="text-sm font-medium">{subjectCode === 'MATH' ? 'Toán' : 'Tiếng Anh'}</span>
+                      <Input
+                        type="date"
+                        value={editSubjectAdmissionDates[subjectCode] ?? ''}
+                        onChange={(e) => setEditSubjectAdmissionDates((current) => ({ ...current, [subjectCode]: e.target.value }))}
+                        aria-label={`Ngày nhập học môn ${subjectCode}`}
+                      />
+                      <Input
+                        type="date"
+                        value={editSubjectReportBDates[subjectCode] ?? ''}
+                        onChange={(e) => setEditSubjectReportBDates((current) => ({ ...current, [subjectCode]: e.target.value }))}
+                        aria-label={`Ngày Report B môn ${subjectCode}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Thứ tự cột: Môn học - Ngày nhập học - Ngày Report B.</p>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2"><Label>Họ tên ba</Label><Input value={editForm.fatherFullName} onChange={(e) => setEditForm((current) => ({ ...current, fatherFullName: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>SĐT ba</Label><Input value={editForm.fatherPhone} onChange={(e) => setEditForm((current) => ({ ...current, fatherPhone: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>Họ tên mẹ</Label><Input value={editForm.motherFullName} onChange={(e) => setEditForm((current) => ({ ...current, motherFullName: e.target.value }))} /></div>
+              <div className="space-y-2"><Label>SĐT mẹ</Label><Input value={editForm.motherPhone} onChange={(e) => setEditForm((current) => ({ ...current, motherPhone: e.target.value }))} /></div>
+              <div className="space-y-2 md:col-span-2"><Label>Địa chỉ</Label><Input value={editForm.address} onChange={(e) => setEditForm((current) => ({ ...current, address: e.target.value }))} /></div>
+            </div>
           </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>Hủy</Button>
-            <Button onClick={() => void submitEditStudent()}>Lưu chỉnh sửa</Button>
+            <Button onClick={() => void submitEditStudent()}>
+              <Save className="mr-2 h-4 w-4" />
+              Lưu chỉnh sửa</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1653,15 +1981,15 @@ function StudentsPageContent() {
                   const nextMode = value as 'all' | 'subjects';
                   setDropoutMode(nextMode);
                   if (nextMode === 'subjects' && dropoutStudent) {
-                    const subjectEnrollments = dropoutStudent.enrollments.filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === dropoutSubject);
+                    const subjectEnrollments = dropoutStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment) && enrollment.subjectCode === dropoutSubject);
                     setDropoutEnrollmentIds(subjectEnrollments.map((enrollment) => enrollment.id));
                   }
                 }}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Thoi hoc toan bo</SelectItem>
-                  <SelectItem value="subjects">Thoi hoc theo mon</SelectItem>
+                  <SelectItem value="all">Thôi học toàn bộ</SelectItem>
+                  <SelectItem value="subjects">Thôi học theo môn</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1673,13 +2001,13 @@ function StudentsPageContent() {
                   onValueChange={(value) => {
                     const subject = value as SubjectCode;
                     setDropoutSubject(subject);
-                    const subjectEnrollments = (dropoutStudent?.enrollments ?? []).filter((enrollment) => !enrollment.endDate && enrollment.subjectCode === subject);
+                    const subjectEnrollments = (dropoutStudent?.enrollments ?? []).filter((enrollment) => isEnrollmentActive(enrollment) && enrollment.subjectCode === subject);
                     setDropoutEnrollmentIds(subjectEnrollments.map((enrollment) => enrollment.id));
                   }}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {Array.from(new Set((dropoutStudent?.enrollments ?? []).filter((enrollment) => !enrollment.endDate).map((enrollment) => enrollment.subjectCode))).map((subject) => (
+                    {Array.from(new Set((dropoutStudent?.enrollments ?? []).filter((enrollment) => isEnrollmentActive(enrollment)).map((enrollment) => enrollment.subjectCode))).map((subject) => (
                       <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1710,7 +2038,7 @@ function StudentsPageContent() {
               <Select value={reenrollSubject} onValueChange={(value) => setReenrollSubject(value as SubjectCode)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Array.from(new Set((reenrollStudent?.enrollments ?? []).filter((enrollment) => Boolean(enrollment.endDate)).map((enrollment) => enrollment.subjectCode))).map((subject) => (
+                  {Array.from(new Set((reenrollStudent?.enrollments ?? []).filter((enrollment) => isEnrollmentDropped(enrollment)).map((enrollment) => enrollment.subjectCode))).map((subject) => (
                     <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toan' : 'Tieng Anh'}</SelectItem>
                   ))}
                 </SelectContent>
@@ -1720,6 +2048,117 @@ function StudentsPageContent() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setReenrollOpen(false)}>Huy</Button>
             <Button onClick={() => void submitReenroll()}>Xac nhan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={addSubjectOpen} onOpenChange={setAddSubjectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Đăng ký môn học mới</DialogTitle>
+            <DialogDescription>{addSubjectStudent ? `Học viên: ${addSubjectStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Môn học</Label>
+              <Select value={addSubjectCode} onValueChange={(value) => setAddSubjectCode(value as SubjectCode)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SUBJECT_OPTIONS.map((subject) => (
+                    <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Loại đăng ký</Label>
+              <Select value={addSubjectRegistrationType} onValueChange={(value) => setAddSubjectRegistrationType(value as AdmissionRegistrationType)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Chinh thuc">Chính thức</SelectItem>
+                  <SelectItem value="Hoc thu">Học thử</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ngày nhập học</Label>
+              <Input type="date" value={addSubjectStartDate} onChange={(e) => setAddSubjectStartDate(e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ngày Report B</Label>
+              <Input type="date" value={addSubjectReportBDate} onChange={(e) => setAddSubjectReportBDate(e.target.value)} />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddSubjectOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitAddSubject()} disabled={savingAddSubject}>
+              {savingAddSubject ? 'Đang lưu...' : 'Lưu đăng ký môn'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={officialAdmissionOpen} onOpenChange={setOfficialAdmissionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Xử lý nhập học chính thức</DialogTitle>
+            <DialogDescription>{officialAdmissionStudent ? `Học viên: ${officialAdmissionStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Ngày nhập học chính thức</Label>
+              <Input type="date" value={officialAdmissionDate} onChange={(e) => setOfficialAdmissionDate(e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Phương thức</Label>
+              <Select value={officialAdmissionMode} onValueChange={(value) => setOfficialAdmissionMode(value as OfficialAdmissionMode)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Nhập học toàn bộ môn đang học</SelectItem>
+                  <SelectItem value="subjects">Nhập học theo môn</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {officialAdmissionMode === 'subjects' ? (
+              <div className="space-y-2 rounded-xl border p-3">
+                <Label>Chọn môn nhập học chính thức</Label>
+                <div className="space-y-2">
+                  {Array.from(
+                    new Set((officialAdmissionStudent?.enrollments ?? [])
+                      .filter((enrollment) => isEnrollmentActive(enrollment))
+                      .map((enrollment) => enrollment.subjectCode))
+                  ).map((subject) => (
+                    <label key={`official-subject-${subject}`} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={officialAdmissionSubjects.includes(subject)}
+                        onChange={(event) => {
+                          setOfficialAdmissionSubjects((current) => event.target.checked
+                            ? Array.from(new Set([...current, subject]))
+                            : current.filter((value) => value !== subject));
+                        }}
+                      />
+                      <span>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOfficialAdmissionOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitOfficialAdmission()} disabled={savingOfficialAdmission}>
+              {savingOfficialAdmission ? 'Đang xử lý...' : 'Xác nhận nhập học chính thức'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1754,6 +2193,7 @@ type StudentDetailPanelProps = {
   showOfficialRegisterButton?: boolean;
   onEdit: (student: ApiStudent) => void;
   onAssign: (student: ApiStudent) => void;
+  onAddSubject?: (student: ApiStudent) => void;
   getTrialDaysLeft?: (student: ApiStudent) => number;
   extraActionLabel?: string;
   onExtraAction?: (student: ApiStudent) => void;
@@ -1769,6 +2209,7 @@ function StudentDetailPanel({
   showOfficialRegisterButton,
   onEdit,
   onAssign,
+  onAddSubject,
   getTrialDaysLeft,
   extraActionLabel,
   onExtraAction,
@@ -1805,10 +2246,15 @@ function StudentDetailPanel({
       <CardContent className="space-y-5 p-5">
         <div className="grid grid-cols-2 gap-3">
           <Button variant="outline" onClick={() => onEdit(student)}><Edit3 className="mr-2 h-4 w-4" />Chỉnh sửa</Button>
-          <Button onClick={() => onAssign(student)}><PlusCircle className="mr-2 h-4 w-4" />Xếp lớp</Button>
+          <Button onClick={() => onAssign(student)}><FolderPlus className="mr-2 h-4 w-4" />Xếp lớp</Button>
+          {onAddSubject ? (
+            <Button variant="outline" onClick={() => onAddSubject(student)}>
+              <PlusCircle className="mr-2 h-4 w-4" />Đăng ký môn mới
+            </Button>
+          ) : null}
           {extraActionLabel && onExtraAction ? (
             <Button
-              className="col-span-2"
+              className={onAddSubject ? '' : 'col-span-2'}
               variant={extraActionLabel === 'Thôi học' ? 'destructive' : 'secondary'}
               onClick={() => onExtraAction(student)}
             >
@@ -1816,8 +2262,11 @@ function StudentDetailPanel({
               {extraActionLabel}
             </Button>
           ) : null}
-          {showOfficialRegisterButton && onRegisterOfficial && (student.status === STATUS_EXPIRED || isTrialExpiredByCountdown) ? (
-            <Button className="col-span-2" onClick={() => onRegisterOfficial(student)}>Đăng ký chính thức</Button>
+          {showOfficialRegisterButton && onRegisterOfficial ? (
+            <Button className="col-span-2" onClick={() => onRegisterOfficial(student)}>
+              <GraduationCap className="mr-2 h-4 w-4" />
+              Nhập học chính thức
+            </Button>
           ) : null}
         </div>
 
@@ -1826,8 +2275,6 @@ function StudentDetailPanel({
           <div className="space-y-2 text-sm">
             <p><span className="text-muted-foreground">Giới tính:</span> {student.gender}</p>
             <p><span className="text-muted-foreground">Ngày sinh:</span> {formatDate(student.birthDate ?? student.admissionDate)}</p>
-            <p><span className="text-muted-foreground">Ngày nhập học:</span> {formatDate(student.admissionDate)}</p>
-            {showReportB ? <p><span className="text-muted-foreground">Ngày Report B:</span> {student.reportBDate ? formatDate(student.reportBDate) : '-'}</p> : null}
             <p><span className="text-muted-foreground">Địa chỉ:</span> {student.address || '-'}</p>
             {showTrialCountdown ? (
               <p>
@@ -1839,11 +2286,36 @@ function StudentDetailPanel({
         </div>
 
         <div className="space-y-3 rounded-xl border bg-white p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ngày nhập học và ngày Report B theo môn</p>
+          {student.enrollments.length ? (
+            <div className="space-y-3 text-sm">
+              {student.enrollments.map((enrollment) => (
+                <div key={enrollment.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    {getSubjectBadge(enrollment.subjectCode)}
+                    <span className="text-xs text-muted-foreground">{enrollment.registrationType}</span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <p className="text-xs text-muted-foreground">Nhập học: {formatDate(enrollment.startDate)}</p>
+                    <p className="text-xs text-muted-foreground">Report B: {enrollment.reportBDate ? formatDate(enrollment.reportBDate) : (student.reportBDate ? formatDate(student.reportBDate) : '-')}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1 text-sm">
+              <p className="text-muted-foreground">Nhập học: {formatDate(student.admissionDate)}</p>
+              {showReportB ? <p className="text-muted-foreground">Report B: {student.reportBDate ? formatDate(student.reportBDate) : '-'}</p> : null}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-3 rounded-xl border bg-white p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Phụ huynh liên hệ</p>
           <div className="space-y-2 text-sm">
             <p>Ba: {student.fatherFullName || '-'}</p>
             <p className="flex items-center gap-1 text-muted-foreground"><PhoneCall className="h-3.5 w-3.5" /> {student.fatherPhone || '-'}</p>
-            <p>Me: {student.motherFullName || '-'}</p>
+            <p>Mẹ: {student.motherFullName || '-'}</p>
             <p className="flex items-center gap-1 text-muted-foreground"><PhoneCall className="h-3.5 w-3.5" /> {student.motherPhone || '-'}</p>
           </div>
         </div>
@@ -1934,7 +2406,7 @@ function StudentTable({
               <TableCell>{formatDate(student.birthDate ?? student.admissionDate)}</TableCell>
               <TableCell>
                 <div>
-                  <p className="font-medium">Ba: {student.fatherFullName} - Me: {student.motherFullName}</p>
+                  <p className="font-medium">Ba: {student.fatherFullName || '-'} - Mẹ: {student.motherFullName || '-'}</p>
                   <p className="text-xs text-muted-foreground flex items-center gap-2">
                     <HoverTooltip
                       content={(
@@ -1961,8 +2433,28 @@ function StudentTable({
                     : <span className="text-muted-foreground">Chua co mon</span>}
                 </div>
               </TableCell>
-              <TableCell>{formatDate(student.admissionDate)}</TableCell>
-              {showReportB ? <TableCell>{student.reportBDate ? formatDate(student.reportBDate) : '-'}</TableCell> : null}
+              <TableCell>
+                <div className="space-y-1">
+                  {student.enrollments.length > 0 ? student.enrollments.map((enrollment) => (
+                    <div key={`start-${enrollment.id}`} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
+                      <span className="font-medium">{enrollment.subjectCode === 'MATH' ? 'Toán' : 'Tiếng Anh'}:</span>{' '}
+                      {formatDate(enrollment.startDate)}
+                    </div>
+                  )) : formatDate(student.admissionDate)}
+                </div>
+              </TableCell>
+              {showReportB ? (
+                <TableCell>
+                  <div className="space-y-1">
+                    {student.enrollments.length > 0 ? student.enrollments.map((enrollment) => (
+                      <div key={`report-b-${enrollment.id}`} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
+                        <span className="font-medium">{enrollment.subjectCode === 'MATH' ? 'Toán' : 'Tiếng Anh'}:</span>{' '}
+                        {enrollment.reportBDate ? formatDate(enrollment.reportBDate) : (student.reportBDate ? formatDate(student.reportBDate) : '-')}
+                      </div>
+                    )) : (student.reportBDate ? formatDate(student.reportBDate) : '-')} 
+                  </div>
+                </TableCell>
+              ) : null}
               {showTrialCountdown ? (
                 <TableCell>
                   {daysLeft !== null && daysLeft >= 0 ? (

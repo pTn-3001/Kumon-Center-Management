@@ -40,6 +40,8 @@ export async function GET() {
     enrollmentType: fromEnrollmentType(enrollment.enrollmentType),
     classShift: fromClassShift(enrollment.classShift),
     startDate: enrollment.startDate.toISOString(),
+    reportBDate: enrollment.reportBDate?.toISOString() ?? null,
+    reenrollDate: enrollment.reenrollDate?.toISOString() ?? null,
     endDate: enrollment.endDate?.toISOString() ?? null,
   })));
 }
@@ -52,23 +54,57 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'Thiếu thông tin enrollment' }, { status: 400 });
   }
 
-  const created = await prisma.enrollment.create({
-    data: {
-      studentId: toNumber(body.studentId),
-      classGroupId: body.classGroupId ? toNumber(body.classGroupId) : null,
-      subjectCode: body.subjectCode,
-      registrationType: body.registrationType === 'Học thử' ? 'TRIAL' : 'OFFICIAL',
-      enrollmentType: body.enrollmentType === 'Hàng ngày' ? 'DAILY' : 'TWICE_WEEKLY',
-      studyDays: String(body.studyDays),
-      classShift: body.classShift === 'Ca 2' ? 'SHIFT_2' : body.classShift === 'Ca 3' ? 'SHIFT_3' : body.classShift === 'Ca 4' ? 'SHIFT_4' : body.classShift === 'Ca 5' ? 'SHIFT_5' : 'SHIFT_1',
-      startDate: parseDateInput(body.startDate),
-      endDate: body.endDate ? parseDateInput(body.endDate) : null,
-    },
-    include: {
-      student: { select: { id: true, fullName: true, status: true } },
-      classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
-    },
-  });
+  const createDataBase = {
+    studentId: toNumber(body.studentId),
+    classGroupId: body.classGroupId ? toNumber(body.classGroupId) : null,
+    subjectCode: body.subjectCode,
+    registrationType: body.registrationType === 'Học thử' ? 'TRIAL' : 'OFFICIAL',
+    enrollmentType: body.enrollmentType === 'Hàng ngày' ? 'DAILY' : 'TWICE_WEEKLY',
+    studyDays: String(body.studyDays),
+    classShift: body.classShift === 'Ca 2' ? 'SHIFT_2' : body.classShift === 'Ca 3' ? 'SHIFT_3' : body.classShift === 'Ca 4' ? 'SHIFT_4' : body.classShift === 'Ca 5' ? 'SHIFT_5' : 'SHIFT_1',
+    startDate: parseDateInput(body.startDate),
+    reenrollDate: body.reenrollDate ? parseDateInput(body.reenrollDate) : null,
+    endDate: body.endDate ? parseDateInput(body.endDate) : null,
+  };
+
+  let created: any;
+  try {
+    created = await prisma.enrollment.create({
+      data: {
+        ...createDataBase,
+        reportBDate: body.reportBDate ? parseDateInput(body.reportBDate) : null,
+      },
+      include: {
+        student: { select: { id: true, fullName: true, status: true } },
+        classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    const hasUnknownReportB = message.includes('Unknown argument `reportBDate`');
+    const hasUnknownReenroll = message.includes('Unknown argument `reenrollDate`');
+    if (!hasUnknownReportB && !hasUnknownReenroll) {
+      throw error;
+    }
+
+    const fallbackBase: any = { ...createDataBase };
+    if (hasUnknownReenroll) {
+      delete fallbackBase.reenrollDate;
+    }
+
+    created = await prisma.enrollment.create({
+      data: hasUnknownReportB
+        ? fallbackBase
+        : {
+            ...fallbackBase,
+            reportBDate: body.reportBDate ? parseDateInput(body.reportBDate) : null,
+          },
+      include: {
+        student: { select: { id: true, fullName: true, status: true } },
+        classGroup: { select: { id: true, label: true, weekday: true, classShift: true } },
+      },
+    });
+  }
 
   return NextResponse.json({
     ...created,
@@ -77,6 +113,8 @@ export async function POST(request: NextRequest) {
     enrollmentType: fromEnrollmentType(created.enrollmentType),
     classShift: fromClassShift(created.classShift),
     startDate: created.startDate.toISOString(),
+    reportBDate: created.reportBDate?.toISOString() ?? null,
+    reenrollDate: created.reenrollDate?.toISOString() ?? null,
     endDate: created.endDate?.toISOString() ?? null,
   }, { status: 201 });
 }

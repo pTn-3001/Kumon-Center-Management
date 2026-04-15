@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server';
-import type { CertificateRecord, Enrollment, Finance } from '@prisma/client';
+import type { CertificateRecord, Finance } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
 
 export const runtime = 'nodejs';
+
+type DashboardEnrollmentSnapshot = {
+  registrationType: 'OFFICIAL' | 'TRIAL';
+  subjectCode: 'MATH' | 'EFL';
+  startDate: Date;
+  reenrollDate: Date | null;
+  endDate: Date | null;
+};
 
 function monthLabel(date: Date) {
   return `T${date.getMonth() + 1}`;
@@ -39,35 +47,66 @@ function sumFinance(items: Array<{ amount: number; note: string | null }>, tuiti
 }
 
 function countEnrollmentsBySnapshot(
-  enrollments: Array<Pick<Enrollment, 'registrationType' | 'startDate' | 'endDate'>>,
+  enrollments: DashboardEnrollmentSnapshot[],
   registrationType: 'OFFICIAL' | 'TRIAL',
   monthEnd: Date,
 ) {
   return enrollments.filter(
-    (enrollment) =>
-      enrollment.registrationType === registrationType &&
-      enrollment.startDate < monthEnd &&
-      (!enrollment.endDate || enrollment.endDate >= monthEnd)
+    (enrollment) => {
+      if (enrollment.registrationType !== registrationType) {
+        return false;
+      }
+
+      const effectiveStart =
+        enrollment.reenrollDate && enrollment.endDate && enrollment.reenrollDate > enrollment.endDate
+          ? enrollment.reenrollDate
+          : enrollment.startDate;
+
+      return (
+        effectiveStart < monthEnd &&
+        (!enrollment.endDate ||
+          enrollment.endDate >= monthEnd ||
+          (enrollment.reenrollDate ? enrollment.reenrollDate < monthEnd : false))
+      );
+    }
   ).length;
 }
 
 function countDroppedEnrollmentsBySnapshot(
-  enrollments: Array<Pick<Enrollment, 'endDate'>>,
-  monthEnd: Date,
-) {
-  return enrollments.filter((enrollment) => enrollment.endDate && enrollment.endDate < monthEnd).length;
-}
-
-function countSubjectEnrollmentsBySnapshot(
-  enrollments: Array<Pick<Enrollment, 'subjectCode' | 'startDate' | 'endDate'>>,
-  subjectCode: 'MATH' | 'EFL',
+  enrollments: DashboardEnrollmentSnapshot[],
   monthEnd: Date,
 ) {
   return enrollments.filter(
     (enrollment) =>
-      enrollment.subjectCode === subjectCode
-      && enrollment.startDate < monthEnd
-      && (!enrollment.endDate || enrollment.endDate >= monthEnd)
+      enrollment.endDate &&
+      enrollment.endDate < monthEnd &&
+      (!enrollment.reenrollDate || enrollment.reenrollDate >= monthEnd)
+  ).length;
+}
+
+function countSubjectEnrollmentsBySnapshot(
+  enrollments: DashboardEnrollmentSnapshot[],
+  subjectCode: 'MATH' | 'EFL',
+  monthEnd: Date,
+) {
+  return enrollments.filter(
+    (enrollment) => {
+      if (enrollment.subjectCode !== subjectCode) {
+        return false;
+      }
+
+      const effectiveStart =
+        enrollment.reenrollDate && enrollment.endDate && enrollment.reenrollDate > enrollment.endDate
+          ? enrollment.reenrollDate
+          : enrollment.startDate;
+
+      return (
+        effectiveStart < monthEnd &&
+        (!enrollment.endDate ||
+          enrollment.endDate >= monthEnd ||
+          (enrollment.reenrollDate ? enrollment.reenrollDate < monthEnd : false))
+      );
+    }
   ).length;
 }
 
@@ -75,7 +114,7 @@ function buildMonthlyPoint(
   label: string,
   monthEnd: Date,
   monthFinance: Array<{ amount: number; note: string | null }>,
-  enrollments: Array<Pick<Enrollment, 'registrationType' | 'subjectCode' | 'startDate' | 'endDate'>>,
+  enrollments: DashboardEnrollmentSnapshot[],
 ) {
   return {
     month: label,
@@ -101,18 +140,37 @@ export async function GET(request: Request) {
     return { label: monthLabel(d), start: startOfMonth(d), end: endOfMonth(d) };
   });
 
-  const [enrollments, leadsCount, certificates, finance, attendanceCount, activeStaffCount]: [
-    Array<Pick<Enrollment, 'registrationType' | 'subjectCode' | 'startDate' | 'endDate'>>,
+  let enrollments: DashboardEnrollmentSnapshot[] = [];
+  try {
+    enrollments = (await prisma.enrollment.findMany({
+      where: { student: { centerId: DEFAULT_CENTER_ID } },
+      select: { registrationType: true, subjectCode: true, startDate: true, reenrollDate: true, endDate: true },
+    })) as DashboardEnrollmentSnapshot[];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (!message.includes('Unknown field `reenrollDate`')) {
+      throw error;
+    }
+
+    const legacyEnrollments: Array<{
+      registrationType: 'OFFICIAL' | 'TRIAL';
+      subjectCode: 'MATH' | 'EFL';
+      startDate: Date;
+      endDate: Date | null;
+    }> = await prisma.enrollment.findMany({
+      where: { student: { centerId: DEFAULT_CENTER_ID } },
+      select: { registrationType: true, subjectCode: true, startDate: true, endDate: true },
+    });
+    enrollments = legacyEnrollments.map((item) => ({ ...item, reenrollDate: null })) as DashboardEnrollmentSnapshot[];
+  }
+
+  const [leadsCount, certificates, finance, attendanceCount, activeStaffCount]: [
     number,
     Array<Pick<CertificateRecord, 'id' | 'studentName' | 'subjectCode' | 'size' | 'level'>>,
     Array<Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>>,
     number,
     number,
   ] = await Promise.all([
-    prisma.enrollment.findMany({
-      where: { student: { centerId: DEFAULT_CENTER_ID } },
-      select: { registrationType: true, subjectCode: true, startDate: true, endDate: true },
-    }),
     prisma.lead.count({ where: { centerId: DEFAULT_CENTER_ID } }),
     prisma.certificateRecord.findMany({
       where: { centerId: DEFAULT_CENTER_ID },

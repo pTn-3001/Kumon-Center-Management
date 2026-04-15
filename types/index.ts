@@ -30,11 +30,11 @@ export interface Student {
   birthDate?: string | null;
   gender: Gender;
   admissionDate: string;
-  fatherFullName: string;
-  fatherPhone: string;
-  motherFullName: string;
-  motherPhone: string;
-  address: string;
+  fatherFullName: string | null;
+  fatherPhone: string | null;
+  motherFullName: string | null;
+  motherPhone: string | null;
+  address: string | null;
   status: StudentStatus;
   reportB: boolean;
   leaveProofImage?: string | null;
@@ -56,6 +56,8 @@ export interface Enrollment {
   studyDays: string;
   classShift: ClassShift;
   startDate: string;
+  reportBDate?: string | null;
+  reenrollDate?: string | null;
   endDate?: string | null;
 }
 

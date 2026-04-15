@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, UserRound } from 'lucide-react';
+import { Eye, EyeOff, Lock, UserRound } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ export default function SignInPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,7 +49,14 @@ export default function SignInPage() {
             <CardTitle className="text-2xl">Đăng nhập hệ thống</CardTitle>
             <p className="text-sm text-muted-foreground">Phiên đăng nhập được duy trì 24 giờ.</p>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitSignIn();
+              }}
+            >
             <div className="space-y-2">
               <Label>Username</Label>
               <div className="relative">
@@ -60,13 +68,28 @@ export default function SignInPage() {
               <Label>Mật khẩu</Label>
               <div className="relative">
                 <Lock className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="pl-10" placeholder="Nhập mật khẩu" />
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="pl-10 pr-10"
+                  placeholder="Nhập mật khẩu"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
             </div>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            <Button className="w-full" disabled={loading} onClick={() => void submitSignIn()}>
+            <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
             </Button>
+            </form>
           </CardContent>
         </Card>
       </div>
