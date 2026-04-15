@@ -206,6 +206,50 @@ function isEnrollmentDropped(enrollment: { endDate: string | null; reenrollDate:
   return Boolean(enrollment.endDate) && !isEnrollmentActive(enrollment);
 }
 
+function toMonthKey(dateValue: string) {
+  const date = parseISO(dateValue);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getFirstMonthMultiplier(reportBDate: string | null) {
+  if (!reportBDate) {
+    return 1;
+  }
+
+  const reportDay = parseISO(reportBDate).getDate();
+  return reportDay === 1 ? 1 : 0.5;
+}
+
+function getEnrollmentTuitionForMonth(
+  enrollment: { reportBDate: string | null },
+  monthKey: string,
+  fallbackReportBDate: string | null,
+) {
+  const effectiveReportBDate = enrollment.reportBDate ?? fallbackReportBDate;
+  if (!effectiveReportBDate) {
+    return TUITION_PER_SUBJECT_PER_MONTH;
+  }
+
+  return toMonthKey(effectiveReportBDate) === monthKey
+    ? TUITION_PER_SUBJECT_PER_MONTH * getFirstMonthMultiplier(effectiveReportBDate)
+    : TUITION_PER_SUBJECT_PER_MONTH;
+}
+
+function calculateStudentTuitionForMonth(
+  student: ApiStudent,
+  monthKey: string,
+  activeEnrollments: Array<{ reportBDate: string | null }>,
+) {
+  const enrollmentsToCharge = activeEnrollments.length > 0 ? activeEnrollments : student.enrollments;
+  if (enrollmentsToCharge.length === 0) {
+    return 0;
+  }
+
+  return enrollmentsToCharge.reduce((total, enrollment) => (
+    total + getEnrollmentTuitionForMonth(enrollment, monthKey, student.reportBDate)
+  ), 0);
+}
+
 function StudentsPageContent() {
   const searchParams = useSearchParams();
 
@@ -643,7 +687,7 @@ function StudentsPageContent() {
         return {
           student,
           subjectCount,
-          estimatedAmount: subjectCount * TUITION_PER_SUBJECT_PER_MONTH,
+          estimatedAmount: calculateStudentTuitionForMonth(student, selectedFilterMonthKey, activeEnrollments),
           paid,
         };
       })
@@ -662,9 +706,11 @@ function StudentsPageContent() {
     }
 
     const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
-    const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
-    return subjectCount * selectedPaymentMonths.length * TUITION_PER_SUBJECT_PER_MONTH;
-  }, [selectedPaymentMonths.length, tuitionStudent]);
+    return selectedPaymentMonths.reduce(
+      (total, monthKey) => total + calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
+      0,
+    );
+  }, [selectedPaymentMonths, tuitionStudent]);
 
   async function refreshStudents() {
     const response = await fetch('/api/hoc-vien', { cache: 'no-store' });
@@ -848,7 +894,6 @@ function StudentsPageContent() {
     try {
       const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
       const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
-      const monthlyAmount = subjectCount * TUITION_PER_SUBJECT_PER_MONTH;
 
       const requests = selectedPaymentMonths.map((monthKey) =>
         fetch('/api/tai-chinh', {
@@ -856,7 +901,7 @@ function StudentsPageContent() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'Khác',
-            amount: monthlyAmount,
+            amount: calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
             spentAt: `${monthKey}-01`,
             note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
             proofImage: null,
