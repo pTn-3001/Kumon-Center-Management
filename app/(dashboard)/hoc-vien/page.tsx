@@ -1245,13 +1245,14 @@ function StudentsPageContent() {
         }
 
         if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && admissionFeePaid) {
+          const admissionFeeRevenueDate = defaultReportBDate ?? studentAdmissionDate;
           const admissionFeeResponse = await fetch('/api/tai-chinh', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               type: 'Khác',
               amount: 300000,
-              spentAt: form.admissionDate,
+              spentAt: admissionFeeRevenueDate,
               note: `[ADMISSION_FEE] studentId=${targetStudentId};source=new-intake`,
               proofImage: null,
             }),

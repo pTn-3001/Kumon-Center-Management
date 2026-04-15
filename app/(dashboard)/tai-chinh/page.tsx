@@ -114,6 +114,11 @@ function extractDisplayNote(note: string | null) {
   return note.slice(separatorIndex + 3).trim();
 }
 
+function isRevenueItem(item: Pick<ApiFinanceItem, 'note'>) {
+  const note = item.note ?? '';
+  return note.startsWith('[TUITION]') || note.startsWith('[ADMISSION_FEE]');
+}
+
 export default function FinancePage() {
   const [items, setItems] = useState<ApiFinancePayload>([]);
   const [staffItems, setStaffItems] = useState<ApiStaffItem[]>([]);
@@ -171,18 +176,20 @@ export default function FinancePage() {
     void loadStaffItems();
   }, [editingId, form.type]);
 
+  const expenseItems = useMemo(() => items.filter((item) => !isRevenueItem(item)), [items]);
+
   const summary = useMemo(() => {
-    const totalExpense = items.reduce((sum, item) => sum + item.amount, 0);
-    const totalRevenue = 151500000;
+    const totalExpense = expenseItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalRevenue = items.filter((item) => isRevenueItem(item)).reduce((sum, item) => sum + item.amount, 0);
     const balance = totalRevenue - totalExpense;
     const topCategory = expenseTypes.reduce((best, current) => {
-      const bestAmount = items.filter((item) => item.type === best).reduce((sum, item) => sum + item.amount, 0);
-      const currentAmount = items.filter((item) => item.type === current).reduce((sum, item) => sum + item.amount, 0);
+      const bestAmount = expenseItems.filter((item) => item.type === best).reduce((sum, item) => sum + item.amount, 0);
+      const currentAmount = expenseItems.filter((item) => item.type === current).reduce((sum, item) => sum + item.amount, 0);
       return currentAmount > bestAmount ? current : best;
     }, expenseTypes[0]);
 
     return { totalExpense, totalRevenue, balance, topCategory };
-  }, [items]);
+  }, [expenseItems, items]);
 
   const contractStaffItems = useMemo(() => {
     const todayKey = new Date().toISOString().slice(0, 10);
@@ -198,11 +205,28 @@ export default function FinancePage() {
     });
   }, [staffItems]);
 
-  const chartData = useMemo(() => items.slice().reverse().map((item, index) => ({
-    month: formatDate(item.spentAt),
-    revenue: summary.totalRevenue - index * 1000000,
-    expense: item.amount,
-  })), [items, summary.totalRevenue]);
+  const chartData = useMemo(() => {
+    const monthMap = new Map<string, { month: string; revenue: number; expense: number }>();
+
+    items.forEach((item) => {
+      const monthKey = item.spentAt.slice(0, 7);
+      const [yearText, monthText] = monthKey.split('-');
+      const monthLabel = `T${Number(monthText)}/${yearText}`;
+      const current = monthMap.get(monthKey) ?? { month: monthLabel, revenue: 0, expense: 0 };
+
+      if (isRevenueItem(item)) {
+        current.revenue += item.amount;
+      } else {
+        current.expense += item.amount;
+      }
+
+      monthMap.set(monthKey, current);
+    });
+
+    return Array.from(monthMap.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([, value]) => value);
+  }, [items]);
 
   const salaryPreview = useMemo(() => {
     const selectedStaffId = editingId ? formSalaryStaffId : salaryStaffId;
@@ -554,7 +578,7 @@ export default function FinancePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item) => (
+              {expenseItems.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell><Badge variant="secondary">{item.type}</Badge></TableCell>
                   <TableCell className="font-medium">{formatCurrency(item.amount)}</TableCell>
