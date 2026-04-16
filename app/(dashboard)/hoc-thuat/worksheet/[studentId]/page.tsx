@@ -639,7 +639,7 @@ export default function StudentWorksheetLogPage() {
         <div>
           <Link href="/hoc-thuat?tab=kho" className="text-sm text-kumon-600 hover:underline">Quay lại kho worksheet</Link>
           <h1 className="mt-2 text-2xl font-semibold text-slate-950">Nhật ký worksheet - {student.fullName}</h1>
-          <p className="text-sm text-muted-foreground">Chọn dòng ngày để mở side panel và gán worksheet.</p>
+          <p className="text-sm text-muted-foreground">Chọn từng dòng để mở cửa sổ và gán worksheet.</p>
         </div>
         <div className="w-full max-w-[440px] rounded-2xl border bg-white p-3">
           <div className="grid gap-3 md:grid-cols-[150px_1fr_auto]">
@@ -665,7 +665,7 @@ export default function StudentWorksheetLogPage() {
               </Select>
             </div>
             <div className="self-end">
-              <Button type="button" variant="outline" onClick={() => void saveCurrentLevel()} disabled={savingCurrentLevel || !selectedEnrollmentLevel?.id}>
+              <Button type="button" onClick={() => void saveCurrentLevel()} disabled={savingCurrentLevel || !selectedEnrollmentLevel?.id}>
                 {savingCurrentLevel ? 'Đang lưu...' : 'Lưu trình độ'}
               </Button>
             </div>
@@ -765,8 +765,8 @@ export default function StudentWorksheetLogPage() {
                     <TableCell>{getSubjectLabel(item.subjectCode)}</TableCell>
                     <TableCell><Badge variant="secondary">{item.level}</Badge></TableCell>
                     <TableCell>{item.correctAnswers}/{item.totalQuestions}</TableCell>
-                    <TableCell>{item.actualMinutes}/{item.standardMinutes} phút</TableCell>
-                    <TableCell>Nhóm {item.groupNo}</TableCell>
+                    <TableCell>{item.actualMinutes}/{item.standardMinutes}</TableCell>
+                    <TableCell>{item.groupNo}</TableCell>
                   </TableRow>
                 ))}
                 {allAssessments.length === 0 ? (

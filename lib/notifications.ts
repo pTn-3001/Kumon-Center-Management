@@ -77,6 +77,15 @@ export async function ensureAppointmentReminderNotifications(centerId: number) {
 }
 
 export async function ensureLowStockNotifications(centerId: number) {
+  // Ignore internal assignment tracking batches; they are not real warehouse stock.
+  const isTrackingBatch = (batch: { level: string; codeRange: string; note: string | null }) => {
+    return (
+      batch.level === 'ASSIGNMENT' ||
+      batch.codeRange.startsWith('TRACK-') ||
+      Boolean(batch.note?.includes('[WS_ASSIGNMENT_BATCH]'))
+    );
+  };
+
   const [batches, usages] = await Promise.all([
     prisma.worksheetBatch.findMany({
       where: { centerId },
@@ -98,10 +107,16 @@ export async function ensureLowStockNotifications(centerId: number) {
 
   const stockByKey = new Map<string, { subjectCode: string; level: string; codeRange: string; worksheetType: string; stock: number }>();
   batches.forEach((batch: WorksheetBatchItem) => {
+    if (isTrackingBatch(batch)) {
+      return;
+    }
+
     const used = usageByBatch.get(batch.id) ?? 0;
     const remaining = batch.quantity - used;
     const worksheetType = batch.codeRange?.startsWith('AT-') || batch.level?.startsWith('AT-')
       ? 'Bài kiểm tra kết thúc trình độ'
+      : batch.codeRange?.startsWith('DT-') || batch.level?.startsWith('DT-')
+        ? 'Bài kiểm tra đầu vào'
       : batch.note?.includes('[WS_WRITING_BATCH]')
         ? 'Kỹ năng viết'
         : 'Worksheet thường';
@@ -119,6 +134,19 @@ export async function ensureLowStockNotifications(centerId: number) {
 
   const todayKey = new Date().toISOString().slice(0, 10);
 
+  if (hasNotificationModel()) {
+    await prisma.notification.deleteMany({
+      where: {
+        centerId,
+        type: 'LOW_STOCK',
+        OR: [
+          { message: { contains: 'TRACK-' } },
+          { message: { contains: 'Level ASSIGNMENT' } },
+        ],
+      },
+    });
+  }
+
   await Promise.all(
     Array.from(stockByKey.values())
       .filter((item) => item.stock < 15)
@@ -127,7 +155,7 @@ export async function ensureLowStockNotifications(centerId: number) {
           centerId,
           type: 'LOW_STOCK',
           title: 'Cảnh báo tồn kho worksheet thấp',
-          message: `${item.subjectCode} - ${item.worksheetType} - ${item.codeRange} (Level ${item.level}) còn ${item.stock} worksheet.`,
+          message: `${item.subjectCode} - ${item.worksheetType} - ${item.codeRange} còn ${item.stock} worksheet.`,
           targetRoles: ['ADMIN', 'CONSULTANT'],
           eventKey: `LOW_STOCK_${item.subjectCode}_${item.level}_${item.codeRange}_${todayKey}`,
         })

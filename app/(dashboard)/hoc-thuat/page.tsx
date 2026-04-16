@@ -108,6 +108,7 @@ type WorksheetAssignmentRow = {
 type StockRow = {
   worksheetCode: string;
   opening: number;
+  imported: number;
   used: number;
   generated: number;
   closing: number;
@@ -214,7 +215,15 @@ function isWorksheetAssignmentUsage(usage: AcademicWorksheetUsage) {
 }
 
 function extractWorksheetCodeFromNote(note: string | null) {
-  if (!note || !note.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+  if (!note) {
+    return '';
+  }
+
+  if (note.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
+    return note.slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length).trim().toUpperCase();
+  }
+
+  if (!note.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
     return '';
   }
 
@@ -323,6 +332,8 @@ function AcademicWarehousePageContent() {
   const [inventoryWorksheetNumber, setInventoryWorksheetNumber] = useState('1');
   const [stockSubject, setStockSubject] = useState<InventorySubject>('MATH');
   const [stockLevel, setStockLevel] = useState('A');
+  const [stockMonthFilter, setStockMonthFilter] = useState(String(new Date().getMonth() + 1));
+  const [stockYearFilter, setStockYearFilter] = useState(String(new Date().getFullYear()));
   const [selectedStockRow, setSelectedStockRow] = useState<StockRow | null>(null);
   const [stockDetailOpen, setStockDetailOpen] = useState(false);
   const [stockEditForm, setStockEditForm] = useState({ opening: '0', used: '0', generated: '0', closing: '0' });
@@ -448,6 +459,25 @@ function AcademicWarehousePageContent() {
     return stockSubject === 'WRITING' ? ['ZI', 'ZII'] : levelBySubject[stockSubject];
   }, [stockSubject]);
 
+  const stockPeriod = useMemo(() => {
+    const year = Number(stockYearFilter);
+    const month = Number(stockMonthFilter);
+    const startDate = new Date(year, month - 1, 1);
+    const nextMonthStartDate = new Date(year, month, 1);
+
+    return {
+      startKey: toDateInputValue(startDate),
+      nextStartKey: toDateInputValue(nextMonthStartDate),
+    };
+  }, [stockMonthFilter, stockYearFilter]);
+
+  const stockYearOptions = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+    (data?.worksheetBatches ?? []).forEach((batch) => years.add(new Date(batch.receivedAt).getFullYear()));
+    (data?.worksheetUsages ?? []).forEach((usage) => years.add(new Date(usage.usedAt).getFullYear()));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [data?.worksheetBatches, data?.worksheetUsages]);
+
   const stockRows = useMemo(() => {
     const assignmentBatchById = new Map<number, AcademicWorksheetBatch>(
       (data?.worksheetBatches ?? []).map((batch) => [batch.id, batch])
@@ -465,20 +495,56 @@ function AcademicWarehousePageContent() {
         && normalizeWorksheetCode(batch.codeRange) === normalizeWorksheetCode(worksheetCode)
       ));
 
-      const opening = matchedBatches.reduce((sum, batch) => sum + batch.quantity, 0);
+      const openingImported = matchedBatches
+        .filter((batch) => toDateInputValue(batch.receivedAt) < stockPeriod.startKey)
+        .reduce((sum, batch) => sum + batch.quantity, 0);
+
+      const importedInPeriod = matchedBatches
+        .filter((batch) => {
+          const batchDate = toDateInputValue(batch.receivedAt);
+          return batchDate >= stockPeriod.startKey && batchDate < stockPeriod.nextStartKey;
+        })
+        .reduce((sum, batch) => sum + batch.quantity, 0);
+
       const batchUsages = availableUsages.filter((usage: AcademicWorksheetUsage) => matchedBatches.some((batch) => batch.id === usage.batchId));
       const isGeneratedUsage = (usage: AcademicWorksheetUsage) => (
         usage.note?.startsWith(WORKSHEET_EXTRA_NOTE_PREFIX)
         || usage.note?.startsWith(WORKSHEET_LOAN_NOTE_PREFIX)
         || usage.note?.startsWith(WORKSHEET_RETURN_NOTE_PREFIX)
       );
-      const generated = batchUsages
+
+      const usagesBeforePeriod = batchUsages.filter((usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        return usageDate < stockPeriod.startKey;
+      });
+
+      const usagesInPeriod = batchUsages.filter((usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        return usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey;
+      });
+
+      const generatedBefore = usagesBeforePeriod
         .filter((usage: AcademicWorksheetUsage) => isGeneratedUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
-      const baseUsed = batchUsages
+
+      const generatedUsageInPeriod = usagesInPeriod
+        .filter((usage: AcademicWorksheetUsage) => isGeneratedUsage(usage))
+        .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
+
+      const baseUsedBefore = usagesBeforePeriod
         .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
-      const assignmentUsed = (data?.worksheetUsages ?? []).reduce((sum, usage) => {
+
+      const baseUsed = usagesInPeriod
+        .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage))
+        .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
+
+      const assignmentUsedBefore = (data?.worksheetUsages ?? []).reduce((sum, usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        if (usageDate >= stockPeriod.startKey) {
+          return sum;
+        }
+
         const worksheet = extractWorksheetCodeFromNote(usage.note);
         if (!worksheet || normalizeWorksheetCode(worksheet) !== normalizeWorksheetCode(worksheetCode)) {
           return sum;
@@ -500,19 +566,50 @@ function AcademicWarehousePageContent() {
         return batch.subjectCode === stockSubject ? sum + usage.quantity : sum;
       }, 0);
 
+      const assignmentUsed = (data?.worksheetUsages ?? []).reduce((sum, usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        if (!(usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey)) {
+          return sum;
+        }
+
+        const worksheet = extractWorksheetCodeFromNote(usage.note);
+        if (!worksheet || normalizeWorksheetCode(worksheet) !== normalizeWorksheetCode(worksheetCode)) {
+          return sum;
+        }
+
+        if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
+          return stockSubject === 'WRITING' ? sum + usage.quantity : sum;
+        }
+
+        if (!usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+          return sum;
+        }
+
+        const batch = assignmentBatchById.get(usage.batchId);
+        if (!batch) {
+          return sum;
+        }
+
+        return batch.subjectCode === stockSubject ? sum + usage.quantity : sum;
+      }, 0);
+
+      const opening = openingImported - baseUsedBefore - assignmentUsedBefore - generatedBefore;
+
       const used = baseUsed + assignmentUsed;
-      const closing = opening - used - generated;
+      const generated = generatedUsageInPeriod;
+      const closing = opening + importedInPeriod - used - generated;
 
       return {
         worksheetCode,
         opening,
+        imported: importedInPeriod,
         used,
         generated,
         closing,
         matchedBatchIds: matchedBatches.map((batch) => batch.id),
       } satisfies StockRow;
     });
-  }, [data?.worksheetBatches, data?.worksheetUsages, stockLevel, stockSubject, worksheetInventory]);
+  }, [data?.worksheetBatches, data?.worksheetUsages, stockLevel, stockPeriod.nextStartKey, stockPeriod.startKey, stockSubject, worksheetInventory]);
 
   const worksheetAssignmentBatchMap = useMemo(() => {
     const entries = (data?.worksheetBatches ?? [])
@@ -1538,9 +1635,9 @@ function AcademicWarehousePageContent() {
                   </>
                 ) : (
                   <Card className="border bg-white">
-                    <CardHeader><CardTitle className="text-lg">Tồn kho worksheet realtime</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-lg">Tồn kho worksheet theo tháng</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="grid gap-3 md:grid-cols-2">
+                      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                         <div className="space-y-2">
                           <Label>Môn học</Label>
                           <Select value={stockSubject} onValueChange={(value) => setStockSubject(value as InventorySubject)}>
@@ -1563,13 +1660,40 @@ function AcademicWarehousePageContent() {
                             </SelectContent>
                           </Select>
                         </div>
+                        <div className="space-y-2">
+                          <Label>Tháng</Label>
+                          <Select value={stockMonthFilter} onValueChange={setStockMonthFilter}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 12 }).map((_, idx) => (
+                                <SelectItem key={`stock-month-${idx + 1}`} value={String(idx + 1)}>Tháng {idx + 1}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Năm</Label>
+                          <Select value={stockYearFilter} onValueChange={setStockYearFilter}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {stockYearOptions.map((year) => (
+                                <SelectItem key={`stock-year-${year}`} value={String(year)}>{year}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        Tồn đầu tháng được tự động kế thừa từ tồn cuối của tháng trước.
+                      </p>
 
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHead>Worksheet</TableHead>
                             <TableHead>Tồn đầu</TableHead>
+                            <TableHead>Nhập kho</TableHead>
                             <TableHead>Sử dụng</TableHead>
                             <TableHead>Phát sinh</TableHead>
                             <TableHead>Tồn cuối</TableHead>
@@ -1584,6 +1708,7 @@ function AcademicWarehousePageContent() {
                             >
                               <TableCell className="font-medium">{row.worksheetCode}</TableCell>
                               <TableCell>{row.opening}</TableCell>
+                              <TableCell>{row.imported}</TableCell>
                               <TableCell>{row.used}</TableCell>
                               <TableCell>{row.generated}</TableCell>
                               <TableCell className={row.closing < 0 ? 'text-red-600 font-semibold' : ''}>{row.closing}</TableCell>
