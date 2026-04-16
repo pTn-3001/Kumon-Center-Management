@@ -1435,7 +1435,7 @@ function StudentsPageContent() {
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label={stats[0].label} value={String(stats[0].value)} delta="Theo tháng hiện tại" tone="amber" />
-        <MetricCard label={stats[1].label} value={String(stats[1].value)} delta="Đang hoạt động" tone="emerald" />
+        <MetricCard label={stats[1].label} value={String(stats[1].value)} delta="Đang học" tone="emerald" />
         <MetricCard label={stats[2].label} value={String(stats[2].value)} delta="Cần theo dõi" tone="cyan" />
         <MetricCard label={stats[3].label} value={String(stats[3].value)} delta="Đã nghỉ" tone="slate" />
       </section>

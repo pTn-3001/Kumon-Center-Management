@@ -13,6 +13,14 @@ type DashboardEnrollmentSnapshot = {
   endDate: Date | null;
 };
 
+type DashboardStudentStatusSnapshot = {
+  status: 'OFFICIAL' | 'TRIAL' | 'EXPIRED' | 'DROPPED';
+  enrollments: Array<{
+    endDate: Date | null;
+    reenrollDate: Date | null;
+  }>;
+};
+
 function monthLabel(date: Date) {
   return `T${date.getMonth() + 1}`;
 }
@@ -110,6 +118,18 @@ function countSubjectEnrollmentsBySnapshot(
   ).length;
 }
 
+function isEnrollmentActiveNow(enrollment: { endDate: Date | null; reenrollDate: Date | null }) {
+  if (!enrollment.endDate) {
+    return true;
+  }
+
+  if (!enrollment.reenrollDate) {
+    return false;
+  }
+
+  return enrollment.reenrollDate.getTime() > enrollment.endDate.getTime();
+}
+
 function buildMonthlyPoint(
   label: string,
   monthEnd: Date,
@@ -164,12 +184,13 @@ export async function GET(request: Request) {
     enrollments = legacyEnrollments.map((item) => ({ ...item, reenrollDate: null })) as DashboardEnrollmentSnapshot[];
   }
 
-  const [leadsCount, certificates, finance, attendanceCount, activeStaffCount]: [
+  const [leadsCount, certificates, finance, attendanceCount, activeStaffCount, studentStatusSnapshot]: [
     number,
     Array<Pick<CertificateRecord, 'id' | 'studentName' | 'subjectCode' | 'size' | 'level'>>,
     Array<Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>>,
     number,
     number,
+    DashboardStudentStatusSnapshot[],
   ] = await Promise.all([
     prisma.lead.count({ where: { centerId: DEFAULT_CENTER_ID } }),
     prisma.certificateRecord.findMany({
@@ -190,7 +211,33 @@ export async function GET(request: Request) {
       },
     }),
     prisma.staff.count({ where: { centerId: DEFAULT_CENTER_ID, active: true } }),
+    prisma.student.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      select: {
+        status: true,
+        enrollments: {
+          select: {
+            endDate: true,
+            reenrollDate: true,
+          },
+        },
+      },
+    }) as Promise<DashboardStudentStatusSnapshot[]>,
   ]);
+
+  const officialEnrollmentCount = studentStatusSnapshot
+    .filter((student) => student.status === 'OFFICIAL')
+    .reduce(
+      (total, student) => total + student.enrollments.filter((enrollment) => isEnrollmentActiveNow(enrollment)).length,
+      0,
+    );
+
+  const trialEnrollmentCount = studentStatusSnapshot
+    .filter((student) => student.status === 'TRIAL' || student.status === 'EXPIRED')
+    .reduce(
+      (total, student) => total + student.enrollments.filter((enrollment) => isEnrollmentActiveNow(enrollment)).length,
+      0,
+    );
 
   const monthlyStats = months.map((month) => {
     const inMonthFinance = finance
@@ -253,11 +300,11 @@ export async function GET(request: Request) {
       availableYears,
     },
     stats: {
-      activeStudents: latestMonth.activeStudents,
-      trialStudents: latestMonth.trialStudents,
+      activeStudents: officialEnrollmentCount,
+      trialStudents: trialEnrollmentCount,
       leads: leadsCount,
       monthlyRevenue: latestMonth.revenue,
-      conversionRate: leadsCount > 0 ? Math.round((latestMonth.activeStudents / leadsCount) * 100) : 0,
+      conversionRate: leadsCount > 0 ? Math.round((officialEnrollmentCount / leadsCount) * 100) : 0,
       activeStaffCount,
       monthlyLessons: attendanceCount,
     },

@@ -102,8 +102,8 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Chính thức (lượt môn)" value={String(latestStats.activeStudents)} delta="Đếm theo số môn đang học" tone="emerald" />
-        <MetricCard label="Học thử (lượt môn)" value={String(latestStats.trialStudents)} delta="Đếm theo số môn học thử" tone="amber" />
+        <MetricCard label="Chính thức (lượt môn)" value={String(latestStats.activeStudents)} delta="Đang học" tone="emerald" />
+        <MetricCard label="Học thử (lượt môn)" value={String(latestStats.trialStudents)} delta="Cần theo dõi" tone="amber" />
         <MetricCard label="Tư vấn" value={String(latestStats.leads)} delta="CRM theo pipeline" tone="cyan" />
         <MetricCard label="Doanh thu tháng" value={formatCurrency(latestStats.monthlyRevenue)} delta={`Lãi gộp ${formatCurrency(revenueGap)}`} tone="slate" />
       </section>
