@@ -41,6 +41,16 @@ function formatSize(value: string) {
   return value === 'SMALL' ? 'small' : 'large';
 }
 
+function formatFinanceType(value: string) {
+  if (value === 'RENT') return 'Thuê mặt bằng';
+  if (value === 'SUPPLIES') return 'Văn phòng phẩm';
+  if (value === 'MARKETING') return 'Marketing';
+  if (value === 'UTILITIES') return 'Điện nước';
+  if (value === 'DEPRECIATION') return 'Khấu hao';
+  if (value === 'OTHER') return 'Khác';
+  return 'Lương';
+}
+
 function isRevenue(item: { note: string | null }) {
   const note = item.note || '';
   return note.startsWith('[TUITION]') || note.startsWith('[ADMISSION_FEE]');
@@ -290,6 +300,19 @@ export async function GET(request: Request) {
     expense: 0,
   };
 
+  const currentMonthStart = startOfMonth(now);
+  const currentMonthEnd = endOfMonth(now);
+  const currentMonthExpenses = finance
+    .filter((item: Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>) => item.spentAt >= currentMonthStart && item.spentAt < currentMonthEnd)
+    .filter((item: Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>) => !isRevenue(item))
+    .slice(0, 3)
+    .map((item: Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>) => ({
+      id: item.id,
+      type: formatFinanceType(item.type),
+      amount: Number(item.amount),
+      spentAt: item.spentAt.toISOString(),
+    }));
+
   return NextResponse.json({
     monthlyStats,
     compareStats,
@@ -324,11 +347,6 @@ export async function GET(request: Request) {
         spentAt: item.spentAt.toISOString(),
         note: item.note,
       })),
-    finance: finance.slice(0, 3).map((item: Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>) => ({
-      id: item.id,
-      type: item.type,
-      amount: Number(item.amount),
-      spentAt: item.spentAt.toISOString(),
-    })),
+    finance: currentMonthExpenses,
   });
 }

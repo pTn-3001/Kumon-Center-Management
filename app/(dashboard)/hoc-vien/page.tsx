@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { addYears, differenceInCalendarDays, parseISO, startOfDay } from 'date-fns';
 import { useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
@@ -211,6 +211,10 @@ function toMonthKey(dateValue: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function isBeforeMonth(monthKey: string, pivotMonthKey: string) {
+  return monthKey.localeCompare(pivotMonthKey) < 0;
+}
+
 function getFirstMonthMultiplier(reportBDate: string | null) {
   if (!reportBDate) {
     return 1;
@@ -230,9 +234,22 @@ function getEnrollmentTuitionForMonth(
     return TUITION_PER_SUBJECT_PER_MONTH;
   }
 
-  return toMonthKey(effectiveReportBDate) === monthKey
+  const reportBMonthKey = toMonthKey(effectiveReportBDate);
+  if (isBeforeMonth(monthKey, reportBMonthKey)) {
+    return 0;
+  }
+
+  return reportBMonthKey === monthKey
     ? TUITION_PER_SUBJECT_PER_MONTH * getFirstMonthMultiplier(effectiveReportBDate)
     : TUITION_PER_SUBJECT_PER_MONTH;
+}
+
+function normalizeProfileText(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function toBirthDateKey(value: string | null | undefined) {
+  return value ? value.slice(0, 10) : '';
 }
 
 function calculateStudentTuitionForMonth(
@@ -328,8 +345,6 @@ function StudentsPageContent() {
   const [prefilledLeadId, setPrefilledLeadId] = useState<number | null>(null);
   const [portalReady, setPortalReady] = useState(false);
 
-  const autoExpiredTrialRef = useRef<Set<number>>(new Set());
-
   const activeTabFromQuery = searchParams.get('tab');
   const leadIdFromQuery = Number(searchParams.get('leadId') ?? '');
   const currentTab: StudentTab = studentTabs.includes(activeTabFromQuery as StudentTab) ? (activeTabFromQuery as StudentTab) : 'hoc-vien';
@@ -415,10 +430,15 @@ function StudentsPageContent() {
 
   const officialStudents = useMemo(
     () => students
-      .filter((s) => s.status === STATUS_OFFICIAL)
+      .filter((student) => student.enrollments.some((enrollment) => (
+        isEnrollmentActive(enrollment) && enrollment.registrationType === 'Chính thức'
+      )))
       .map((student) => ({
         ...student,
-        enrollments: student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment)),
+        status: STATUS_OFFICIAL,
+        enrollments: student.enrollments.filter((enrollment) => (
+          isEnrollmentActive(enrollment) && enrollment.registrationType === 'Chính thức'
+        )),
       })),
     [students]
   );
@@ -434,11 +454,27 @@ function StudentsPageContent() {
   );
   const trialStudents = useMemo(
     () => students
-      .filter((s) => s.status === STATUS_TRIAL || s.status === STATUS_EXPIRED)
-      .map((student) => ({
-        ...student,
-        enrollments: student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment)),
-      })),
+      .map((student) => {
+        const activeTrialEnrollments = student.enrollments.filter((enrollment) => (
+          isEnrollmentActive(enrollment) && enrollment.registrationType === 'Học thử'
+        ));
+
+        if (activeTrialEnrollments.length === 0) {
+          return null;
+        }
+
+        const firstTrialStart = activeTrialEnrollments
+          .map((enrollment) => enrollment.startDate)
+          .sort((a, b) => a.localeCompare(b))[0] ?? student.admissionDate;
+        const daysLeft = 14 - differenceInCalendarDays(startOfDay(new Date()), startOfDay(parseISO(firstTrialStart)));
+
+        return {
+          ...student,
+          status: daysLeft < 0 ? STATUS_EXPIRED : STATUS_TRIAL,
+          enrollments: activeTrialEnrollments,
+        };
+      })
+      .filter((student): student is ApiStudent => Boolean(student)),
     [students]
   );
 
@@ -590,28 +626,6 @@ function StudentsPageContent() {
     }
   }
 
-  useEffect(() => {
-    const overdueTrials = trialStudents.filter(
-      (student) => student.status === STATUS_TRIAL && getTrialDaysLeft(student) < 0 && !autoExpiredTrialRef.current.has(student.id)
-    );
-
-    if (overdueTrials.length === 0) return;
-
-    const runAutoExpire = async () => {
-      try {
-        await Promise.all(overdueTrials.map((student) => {
-          autoExpiredTrialRef.current.add(student.id);
-          return updateStudentStatus(student.id, STATUS_EXPIRED);
-        }));
-        await refreshStudents();
-      } catch {
-        // Keep silent here to avoid noisy banner while user is browsing.
-      }
-    };
-
-    void runAutoExpire();
-  }, [trialStudents]);
-
   const birthdayList = useMemo(() => {
     const currentMonth = new Date().getMonth();
     return students
@@ -636,10 +650,42 @@ function StudentsPageContent() {
     ];
   }, [students, officialStudents, trialStudents, leaveStudents]);
 
+  const paymentYears = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+
+    students.forEach((student) => {
+      years.add(parseISO(student.admissionDate).getFullYear());
+      if (student.reportBDate) {
+        years.add(parseISO(student.reportBDate).getFullYear());
+      }
+
+      student.enrollments.forEach((enrollment) => {
+        years.add(parseISO(enrollment.startDate).getFullYear());
+        if (enrollment.reportBDate) {
+          years.add(parseISO(enrollment.reportBDate).getFullYear());
+        }
+      });
+    });
+
+    financeItems.forEach((item) => {
+      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
+        return;
+      }
+
+      const monthMatch = /month=(\d{4})-\d{2}/.exec(item.note);
+      if (monthMatch) {
+        years.add(Number(monthMatch[1]));
+      }
+    });
+
+    return Array.from(years).sort((a, b) => b - a);
+  }, [students, financeItems]);
+
   const availablePaymentMonths = useMemo(() => {
     const result: Array<{ key: string; label: string; month: number; year: number }> = [];
-    const now = new Date();
-    const base = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const baseYear = Number(tuitionYearFilter);
+    const baseMonth = Number(tuitionMonthFilter);
+    const base = new Date(baseYear, baseMonth - 1, 1);
 
     for (let offset = 0; offset < 12; offset += 1) {
       const date = new Date(base.getFullYear(), base.getMonth() + offset, 1);
@@ -650,9 +696,7 @@ function StudentsPageContent() {
     }
 
     return result;
-  }, []);
-
-  const paymentYears = useMemo(() => Array.from(new Set(availablePaymentMonths.map((item) => item.year))), [availablePaymentMonths]);
+  }, [tuitionMonthFilter, tuitionYearFilter]);
 
   const selectedFilterMonthKey = useMemo(
     () => `${tuitionYearFilter}-${String(Number(tuitionMonthFilter)).padStart(2, '0')}`,
@@ -677,20 +721,34 @@ function StudentsPageContent() {
     return map;
   }, [financeItems]);
 
+  const hasAdmissionFeeRecorded = useCallback((studentId: number) => (
+    financeItems.some((item) =>
+      item.note?.startsWith('[ADMISSION_FEE]') && item.note.includes(`studentId=${studentId}`)
+    )
+  ), [financeItems]);
+
+  const hasOfficialEnrollment = useCallback((student: ApiStudent) => (
+    student.status === STATUS_OFFICIAL || student.enrollments.some((enrollment) => (
+      isEnrollmentActive(enrollment) && enrollment.registrationType === 'Chính thức'
+    ))
+  ), []);
+
   const tuitionRows = useMemo(() => {
     return officialStudents
       .filter((student) => student.enrollments.length > 0)
       .map((student) => {
         const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
         const subjectCount = Math.max(1, activeEnrollments.length || student.enrollments.length);
+        const estimatedAmount = calculateStudentTuitionForMonth(student, selectedFilterMonthKey, activeEnrollments);
         const paid = paidMap.has(`${student.id}-${selectedFilterMonthKey}`);
         return {
           student,
           subjectCount,
-          estimatedAmount: calculateStudentTuitionForMonth(student, selectedFilterMonthKey, activeEnrollments),
+          estimatedAmount,
           paid,
         };
       })
+      .filter((item) => item.estimatedAmount > 0)
       .filter((item) => matchesSearch(item.student))
       .filter((item) => {
         if (tuitionStatusFilter === 'all') return true;
@@ -877,8 +935,7 @@ function StudentsPageContent() {
   }
 
   function openTuitionDialog(student: ApiStudent) {
-    const today = new Date();
-    const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    const currentMonthKey = `${tuitionYearFilter}-${String(Number(tuitionMonthFilter)).padStart(2, '0')}`;
     setTuitionStudent(student);
     setSelectedPaymentMonths([currentMonthKey]);
     setPaymentMethod('Tiền mặt');
@@ -1213,38 +1270,48 @@ function StudentsPageContent() {
       if (!response.ok) throw new Error('Không thể lưu học viên');
 
       const savedStudent = (await response.json()) as { id: number };
-
       const targetStudentId = savedStudent.id;
+
       if (targetStudentId) {
         const subjectsToCreate = selectedSubjects;
 
         if (subjectsToCreate.length > 0) {
-          const enrollmentRequests = subjectsToCreate.map((subjectCode) =>
-            fetch('/api/enrollments', {
+          const enrollmentRequests = subjectsToCreate.map(async (subjectCode) => {
+            const registrationTypeText = admissionRegistrationType === 'Hoc thu' ? 'Học thử' : 'Chính thức';
+            const startDateValue = subjectAdmissionDates[subjectCode] ?? studentAdmissionDate;
+            const reportBDateValue = subjectReportBDates[subjectCode] || null;
+
+            const createResponse = await fetch('/api/enrollments', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 studentId: targetStudentId,
                 classGroupId: null,
                 subjectCode,
-                registrationType: admissionRegistrationType === 'Hoc thu' ? 'Học thử' : 'Chính thức',
+                registrationType: registrationTypeText,
                 enrollmentType: '2 buổi/tuần',
                 studyDays: 'T2',
                 classShift: 'Ca 1',
-                startDate: subjectAdmissionDates[subjectCode] ?? studentAdmissionDate,
-                reportBDate: subjectReportBDates[subjectCode] || null,
+                startDate: startDateValue,
+                reportBDate: reportBDateValue,
                 endDate: null,
               }),
-            })
-          );
+            });
 
-          const enrollmentResponses = await Promise.all(enrollmentRequests);
-          if (enrollmentResponses.some((item) => !item.ok)) {
-            throw new Error('Không thể tạo đăng ký cho một số môn học');
-          }
+            if (!createResponse.ok) {
+              throw new Error('Không thể tạo đăng ký cho một số môn học');
+            }
+          });
+
+          await Promise.all(enrollmentRequests);
         }
 
-        if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && admissionFeePaid) {
+        if (
+          admissionRegistrationType === 'Chinh thuc' &&
+          officialIntakeSource === 'new' &&
+          admissionFeePaid &&
+          !hasAdmissionFeeRecorded(targetStudentId)
+        ) {
           const admissionFeeRevenueDate = defaultReportBDate ?? studentAdmissionDate;
           const admissionFeeResponse = await fetch('/api/tai-chinh', {
             method: 'POST',
@@ -1322,35 +1389,125 @@ function StudentsPageContent() {
     try {
       setSavingOfficialAdmission(true);
       const activeEnrollments = officialAdmissionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
+      const hadOfficialBeforeAdmission = hasOfficialEnrollment(officialAdmissionStudent);
       const targetEnrollments = officialAdmissionMode === 'all'
         ? activeEnrollments
         : activeEnrollments.filter((enrollment) => officialAdmissionSubjects.includes(enrollment.subjectCode));
+
+      const matchingOfficialStudent = students.find((student) => {
+        if (student.id === officialAdmissionStudent.id) {
+          return false;
+        }
+
+        const sameProfile =
+          normalizeProfileText(student.fullName) === normalizeProfileText(officialAdmissionStudent.fullName) &&
+          toBirthDateKey(student.birthDate) === toBirthDateKey(officialAdmissionStudent.birthDate) &&
+          student.gender === officialAdmissionStudent.gender;
+
+        if (!sameProfile) {
+          return false;
+        }
+
+        return student.enrollments.some((enrollment) => (
+          isEnrollmentActive(enrollment) && enrollment.registrationType === 'Chính thức'
+        ));
+      }) ?? null;
 
       if (targetEnrollments.length === 0) {
         throw new Error('Vui lòng chọn ít nhất 1 môn để nhập học chính thức');
       }
 
-      await Promise.all(
-        targetEnrollments.map((enrollment) =>
-          updateEnrollment(enrollment.id, {
-            registrationType: 'Chinh thuc',
-            startDate: officialAdmissionDate,
+      if (matchingOfficialStudent) {
+        await Promise.all(
+          targetEnrollments.map(async (enrollment) => {
+            const existingOfficialEnrollment = matchingOfficialStudent.enrollments.find((item) => item.subjectCode === enrollment.subjectCode) ?? null;
+
+            if (!existingOfficialEnrollment) {
+              await updateEnrollment(enrollment.id, {
+                studentId: matchingOfficialStudent.id,
+                registrationType: 'Chinh thuc',
+                startDate: officialAdmissionDate,
+                endDate: null,
+                reenrollDate: null,
+              });
+              return;
+            }
+
+            if (isEnrollmentActive(existingOfficialEnrollment)) {
+              const deleteResponse = await fetch(`/api/enrollments/${enrollment.id}`, { method: 'DELETE' });
+              if (!deleteResponse.ok) {
+                throw new Error('Không thể gộp đăng ký môn trùng với hồ sơ chính thức');
+              }
+              return;
+            }
+
+            await updateEnrollment(existingOfficialEnrollment.id, {
+              registrationType: 'Chinh thuc',
+              startDate: officialAdmissionDate,
+              reenrollDate: officialAdmissionDate,
+              endDate: null,
+              reportBDate: enrollment.reportBDate || null,
+            });
+
+            const deleteResponse = await fetch(`/api/enrollments/${enrollment.id}`, { method: 'DELETE' });
+            if (!deleteResponse.ok) {
+              throw new Error('Không thể dọn đăng ký học thử sau khi gộp hồ sơ');
+            }
           })
-        )
-      );
+        );
+      } else {
+        await Promise.all(
+          targetEnrollments.map((enrollment) =>
+            updateEnrollment(enrollment.id, {
+              registrationType: 'Chinh thuc',
+              startDate: officialAdmissionDate,
+            })
+          )
+        );
+      }
 
       const remainingTrialEnrollments = activeEnrollments.filter((enrollment) =>
         !targetEnrollments.some((target) => target.id === enrollment.id)
       );
 
-      await updateStudentStatus(
-        officialAdmissionStudent.id,
-        remainingTrialEnrollments.length === 0 ? STATUS_OFFICIAL : STATUS_TRIAL
-      );
+      if (matchingOfficialStudent && remainingTrialEnrollments.length === 0) {
+        const deleteStudentResponse = await fetch(`/api/hoc-vien/${officialAdmissionStudent.id}`, { method: 'DELETE' });
+        if (!deleteStudentResponse.ok) {
+          throw new Error('Không thể gộp 2 hồ sơ học viên');
+        }
+      } else {
+        await updateStudentStatus(
+          officialAdmissionStudent.id,
+          remainingTrialEnrollments.length === 0 ? STATUS_OFFICIAL : STATUS_TRIAL
+        );
+      }
+
+      if (matchingOfficialStudent && matchingOfficialStudent.status !== STATUS_OFFICIAL) {
+        await updateStudentStatus(matchingOfficialStudent.id, STATUS_OFFICIAL);
+      }
+
+      if (!matchingOfficialStudent && !hadOfficialBeforeAdmission && !hasAdmissionFeeRecorded(officialAdmissionStudent.id)) {
+        const admissionFeeResponse = await fetch('/api/tai-chinh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'Khác',
+            amount: 300000,
+            spentAt: officialAdmissionDate,
+            note: `[ADMISSION_FEE] studentId=${officialAdmissionStudent.id};source=trial-conversion`,
+            proofImage: null,
+          }),
+        });
+
+        if (!admissionFeeResponse.ok) {
+          throw new Error('Không thể ghi nhận phí nhập học');
+        }
+      }
 
       setOfficialAdmissionOpen(false);
       setOfficialAdmissionStudent(null);
       setOfficialAdmissionSubjects([]);
+      await refreshFinanceItems();
       await refreshStudents();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Không thể xử lý nhập học chính thức');
