@@ -91,6 +91,42 @@ const FIXED_CLASSES = [
   { subjectCode: 'EFL' as SubjectCode, weekday: 'T7' as Weekday, name: 'Tiếng Anh - Thứ Bảy' },
 ];
 
+function normalizeClassShift(value: string): ClassShift {
+  if (value === 'SHIFT_2' || value === 'Ca 2') return 'Ca 2';
+  if (value === 'SHIFT_3' || value === 'Ca 3') return 'Ca 3';
+  if (value === 'SHIFT_4' || value === 'Ca 4') return 'Ca 4';
+  if (value === 'SHIFT_5' || value === 'Ca 5') return 'Ca 5';
+  return 'Ca 1';
+}
+
+function getShiftForWeekday(studyDays: string, weekday: Weekday, fallbackShift: string): ClassShift {
+  const match = new RegExp(`${weekday}\\s*\\((Ca\\s[1-5])\\)`).exec(studyDays);
+  if (match?.[1]) {
+    return normalizeClassShift(match[1]);
+  }
+
+  return normalizeClassShift(fallbackShift);
+}
+
+function ShiftChartTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ value?: number | string }>;
+}) {
+  if (!active || !payload || payload.length === 0) {
+    return null;
+  }
+
+  const count = Number(payload[0]?.value ?? 0);
+  return (
+    <div className="rounded-md border bg-white px-3 py-2 text-xs font-medium text-slate-900 shadow-sm">
+      {count} học viên
+    </div>
+  );
+}
+
 function ClassPageContent() {
   const router = useRouter();
   const pathname = usePathname();
@@ -332,7 +368,10 @@ function ClassPageContent() {
 
   const shiftData = useMemo(() => {
     const counts = selectedClassEffectiveEnrollments.reduce<Record<string, number>>((acc, enrollment) => {
-      acc[enrollment.classShift] = (acc[enrollment.classShift] ?? 0) + 1;
+      const shift = selectedClass?.weekday
+        ? getShiftForWeekday(enrollment.studyDays, selectedClass.weekday, enrollment.classShift)
+        : normalizeClassShift(enrollment.classShift);
+      acc[shift] = (acc[shift] ?? 0) + 1;
       return acc;
     }, {});
     return Object.entries(counts).map(([name, value]) => ({
@@ -524,7 +563,7 @@ function ClassPageContent() {
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="name" fontSize={12} />
                           <YAxis fontSize={12} />
-                          <Tooltip />
+                          <Tooltip content={<ShiftChartTooltip />} />
                           <Bar dataKey="value" fill="#2ca39d" radius={[8, 8, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>

@@ -93,6 +93,15 @@ function normalizeClassShift(value: string): ClassShift | null {
   return null;
 }
 
+function getShiftFromStudyDays(studyDays: string, weekday: Weekday): ClassShift | null {
+  const match = new RegExp(`${weekday}\\s*\\((Ca\\s[1-5])\\)`).exec(studyDays);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return normalizeClassShift(match[1]);
+}
+
 function getShiftStartAt(date: Date, weekday: Weekday, classShiftCode: string) {
   const classShift = normalizeClassShift(classShiftCode);
   if (!classShift) {
@@ -141,32 +150,64 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
     return;
   }
 
+  const todayClassGroups = await prisma.classGroup.findMany({
+    where: { centerId, weekday },
+    select: { id: true, subjectCode: true, classShift: true, label: true, weekday: true },
+  });
+
+  type TodayClassGroupRow = (typeof todayClassGroups)[number];
+
   const enrollments = await prisma.enrollment.findMany({
     where: {
       student: { centerId },
-      classGroupId: { not: null },
-      classGroup: { weekday },
     },
     select: {
       studentId: true,
       classGroupId: true,
+      subjectCode: true,
+      studyDays: true,
       classShift: true,
       endDate: true,
       reenrollDate: true,
       student: { select: { fullName: true } },
-      classGroup: { select: { label: true, weekday: true } },
     },
   });
 
-  type PreClassEnrollmentRow = (typeof enrollments)[number];
+  type PreClassEnrollmentRow = (typeof enrollments)[number] & {
+    resolvedClassShift: ClassShift;
+    resolvedClassGroupId: number | null;
+    resolvedClassLabel: string;
+  };
 
-  const activeCandidates = enrollments.filter((enrollment: PreClassEnrollmentRow) => isEnrollmentActiveNow(enrollment));
+  const activeCandidates = enrollments
+    .filter((enrollment: (typeof enrollments)[number]) => isEnrollmentActiveNow(enrollment))
+    .map((enrollment: (typeof enrollments)[number]) => {
+      const shiftFromStudyDays = getShiftFromStudyDays(enrollment.studyDays, weekday);
+      const resolvedClassShift = shiftFromStudyDays ?? normalizeClassShift(String(enrollment.classShift));
+      if (!resolvedClassShift) {
+        return null;
+      }
+
+      const matchedClassGroup = todayClassGroups.find((group: TodayClassGroupRow) => (
+        group.subjectCode === enrollment.subjectCode &&
+        normalizeClassShift(String(group.classShift)) === resolvedClassShift
+      ));
+
+      return {
+        ...enrollment,
+        resolvedClassShift,
+        resolvedClassGroupId: matchedClassGroup?.id ?? null,
+        resolvedClassLabel: matchedClassGroup?.label ?? `${enrollment.subjectCode} - ${weekday}`,
+      };
+    })
+    .filter((item: PreClassEnrollmentRow | null): item is PreClassEnrollmentRow => Boolean(item));
+
   if (activeCandidates.length === 0) {
     return;
   }
 
   const reminderCandidates = activeCandidates.filter((enrollment: PreClassEnrollmentRow) => {
-    const shiftStartAt = getShiftStartAt(now, enrollment.classGroup.weekday as Weekday, String(enrollment.classShift));
+    const shiftStartAt = getShiftStartAt(now, weekday, enrollment.resolvedClassShift);
     if (!shiftStartAt) {
       return false;
     }
@@ -181,12 +222,12 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
 
   const todayFrom = startOfDay(now);
   const todayTo = endOfDay(now);
-  const classGroupIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.classGroupId).filter((value: number | null): value is number => Boolean(value))));
+  const classGroupIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.resolvedClassGroupId).filter((value: number | null): value is number => Boolean(value))));
   const studentIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.studentId)));
 
   const attendances = await prisma.attendance.findMany({
     where: {
-      classGroupId: { in: classGroupIds },
+      ...(classGroupIds.length > 0 ? { classGroupId: { in: classGroupIds } } : {}),
       studentId: { in: studentIds },
       date: { gte: todayFrom, lte: todayTo },
       status: 'PRESENT',
@@ -202,16 +243,20 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
   await Promise.all(
     reminderCandidates
       .filter((item: PreClassEnrollmentRow) => {
-        if (!item.classGroupId) return false;
-        return !presentSet.has(`${item.classGroupId}-${item.studentId}`);
+        if (item.resolvedClassGroupId) {
+          return !presentSet.has(`${item.resolvedClassGroupId}-${item.studentId}`);
+        }
+
+        const hasAnyPresentToday = attendances.some((attendance: AttendancePresenceRow) => attendance.studentId === item.studentId);
+        return !hasAnyPresentToday;
       })
       .map((item: PreClassEnrollmentRow) => {
-        const normalizedShift = normalizeClassShift(String(item.classShift));
+        const normalizedShift = item.resolvedClassShift;
         if (!normalizedShift) {
           return null;
         }
 
-        const shiftRange = getShiftTimeRange(item.classGroup.weekday as Weekday, normalizedShift);
+        const shiftRange = getShiftTimeRange(weekday, normalizedShift);
         if (!shiftRange) {
           return null;
         }
@@ -220,9 +265,9 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
           centerId,
           type: 'POST_CLASS_ATTENDANCE_REMINDER',
           title: 'Nhắc nhở điểm danh',
-          message: `${item.student.fullName} chưa điểm danh ${item.classGroup.label}.`,
+          message: `${item.student.fullName} chưa điểm danh ${item.resolvedClassLabel}.`,
           targetRoles: ['ADMIN', 'CONSULTANT'],
-          eventKey: `POST_CLASS_ATTENDANCE_${item.classGroupId}_${item.studentId}_${todayKey}`,
+          eventKey: `POST_CLASS_ATTENDANCE_${item.resolvedClassGroupId ?? `${item.subjectCode}_${weekday}_${normalizedShift}`}_${item.studentId}_${todayKey}`,
         });
       })
       .filter((item: Promise<void> | null): item is Promise<void> => Boolean(item))

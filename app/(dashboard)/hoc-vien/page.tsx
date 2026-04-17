@@ -2546,7 +2546,7 @@ function StudentDetailPanel({
                         group.classShift === schedule.shift
                       );
                       const shiftLabel = formatClassShiftByWeekday(schedule.weekday, schedule.shift as ClassShift);
-                      return mappedClass ? `${mappedClass.label} (${shiftLabel})` : `${schedule.weekday} (${shiftLabel})`;
+                      return mappedClass ? `${mappedClass.label}` : `${schedule.weekday}`;
                     });
 
                     return labels.join(' • ');
