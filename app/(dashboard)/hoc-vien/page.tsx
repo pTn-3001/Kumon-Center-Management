@@ -2033,7 +2033,6 @@ function StudentsPageContent() {
                       {fixedClasses.map((item) => {
                         const checked = selected.selectedWeekdays.includes(item.weekday);
                         const currentShift = selected.shiftsByWeekday[item.weekday] ?? 'Ca 1';
-                        const mappedClass = classGroups.find((group) => group.subjectCode === subjectCode && group.weekday === item.weekday);
 
                         return (
                           <div key={`${subjectCode}-${item.weekday}`} className="grid items-center gap-2 rounded-lg border bg-slate-50 p-2 sm:grid-cols-[1fr_120px]">
@@ -2059,7 +2058,7 @@ function StudentsPageContent() {
                                 }}
                               />
                               <span>{item.name}</span>
-                              <span className="text-xs text-muted-foreground">({mappedClass?.label ?? item.weekday})</span>
+                              <span className="text-xs text-muted-foreground">({item.weekday})</span>
                             </label>
 
                             <Select

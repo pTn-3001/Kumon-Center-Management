@@ -1,5 +1,7 @@
 import { addDays, endOfDay, startOfDay } from 'date-fns';
 import { prisma } from '@/lib/prisma';
+import { getShiftTimeRange } from '@/lib/kumon';
+import type { ClassShift, Weekday } from '@/types';
 
 function hasNotificationModel() {
   return Boolean((prisma as any).notification);
@@ -73,6 +75,157 @@ export async function ensureAppointmentReminderNotifications(centerId: number) {
         eventKey: `APPOINTMENT_REMINDER_${appointment.id}_${from.toISOString().slice(0, 10)}`,
       })
     )
+  );
+}
+
+function weekdayFromDate(date: Date): Weekday | null {
+  const day = date.getDay();
+  if (day === 0) return null;
+  return (`T${day + 1}`) as Weekday;
+}
+
+function normalizeClassShift(value: string): ClassShift | null {
+  if (value === 'SHIFT_1' || value === 'Ca 1') return 'Ca 1';
+  if (value === 'SHIFT_2' || value === 'Ca 2') return 'Ca 2';
+  if (value === 'SHIFT_3' || value === 'Ca 3') return 'Ca 3';
+  if (value === 'SHIFT_4' || value === 'Ca 4') return 'Ca 4';
+  if (value === 'SHIFT_5' || value === 'Ca 5') return 'Ca 5';
+  return null;
+}
+
+function getShiftStartAt(date: Date, weekday: Weekday, classShiftCode: string) {
+  const classShift = normalizeClassShift(classShiftCode);
+  if (!classShift) {
+    return null;
+  }
+
+  const timeRange = getShiftTimeRange(weekday, classShift);
+  if (!timeRange) {
+    return null;
+  }
+
+  const startText = timeRange.split('-')[0]?.trim() ?? '';
+  const [hourText, minuteText] = startText.split(':');
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return null;
+  }
+
+  const at = new Date(date);
+  at.setHours(hour, minute, 0, 0);
+  return at;
+}
+
+function isEnrollmentActiveNow(enrollment: { endDate: Date | null; reenrollDate: Date | null }) {
+  if (!enrollment.endDate) {
+    return true;
+  }
+
+  if (!enrollment.reenrollDate) {
+    return false;
+  }
+
+  return enrollment.reenrollDate.getTime() > enrollment.endDate.getTime();
+}
+
+export async function ensurePreClassAttendanceReminderNotifications(centerId: number) {
+  if (!hasNotificationModel()) {
+    return;
+  }
+
+  const now = new Date();
+  const weekday = weekdayFromDate(now);
+  if (!weekday) {
+    return;
+  }
+
+  const enrollments = await prisma.enrollment.findMany({
+    where: {
+      student: { centerId },
+      classGroupId: { not: null },
+      classGroup: { weekday },
+    },
+    select: {
+      studentId: true,
+      classGroupId: true,
+      classShift: true,
+      endDate: true,
+      reenrollDate: true,
+      student: { select: { fullName: true } },
+      classGroup: { select: { label: true, weekday: true } },
+    },
+  });
+
+  type PreClassEnrollmentRow = (typeof enrollments)[number];
+
+  const activeCandidates = enrollments.filter((enrollment: PreClassEnrollmentRow) => isEnrollmentActiveNow(enrollment));
+  if (activeCandidates.length === 0) {
+    return;
+  }
+
+  const reminderCandidates = activeCandidates.filter((enrollment: PreClassEnrollmentRow) => {
+    const shiftStartAt = getShiftStartAt(now, enrollment.classGroup.weekday as Weekday, String(enrollment.classShift));
+    if (!shiftStartAt) {
+      return false;
+    }
+
+    const passedMinutes = Math.floor((now.getTime() - shiftStartAt.getTime()) / 60000);
+    return passedMinutes >= 15;
+  });
+
+  if (reminderCandidates.length === 0) {
+    return;
+  }
+
+  const todayFrom = startOfDay(now);
+  const todayTo = endOfDay(now);
+  const classGroupIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.classGroupId).filter((value: number | null): value is number => Boolean(value))));
+  const studentIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.studentId)));
+
+  const attendances = await prisma.attendance.findMany({
+    where: {
+      classGroupId: { in: classGroupIds },
+      studentId: { in: studentIds },
+      date: { gte: todayFrom, lte: todayTo },
+      status: 'PRESENT',
+    },
+    select: { classGroupId: true, studentId: true },
+  });
+
+  type AttendancePresenceRow = (typeof attendances)[number];
+
+  const presentSet = new Set(attendances.map((item: AttendancePresenceRow) => `${item.classGroupId}-${item.studentId}`));
+  const todayKey = now.toISOString().slice(0, 10);
+
+  await Promise.all(
+    reminderCandidates
+      .filter((item: PreClassEnrollmentRow) => {
+        if (!item.classGroupId) return false;
+        return !presentSet.has(`${item.classGroupId}-${item.studentId}`);
+      })
+      .map((item: PreClassEnrollmentRow) => {
+        const normalizedShift = normalizeClassShift(String(item.classShift));
+        if (!normalizedShift) {
+          return null;
+        }
+
+        const shiftRange = getShiftTimeRange(item.classGroup.weekday as Weekday, normalizedShift);
+        if (!shiftRange) {
+          return null;
+        }
+
+        return createNotification({
+          centerId,
+          type: 'POST_CLASS_ATTENDANCE_REMINDER',
+          title: 'Nhắc nhở điểm danh',
+          message: `${item.student.fullName} chưa điểm danh ${item.classGroup.label}.`,
+          targetRoles: ['ADMIN', 'CONSULTANT'],
+          eventKey: `POST_CLASS_ATTENDANCE_${item.classGroupId}_${item.studentId}_${todayKey}`,
+        });
+      })
+      .filter((item: Promise<void> | null): item is Promise<void> => Boolean(item))
   );
 }
 

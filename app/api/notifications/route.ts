@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
 import { AUTH_COOKIE_NAME, getStaffSessionFromToken } from '@/lib/auth';
-import { ensureAppointmentReminderNotifications, roleToNotificationCode } from '@/lib/notifications';
+import {
+  ensureAppointmentReminderNotifications,
+  ensurePreClassAttendanceReminderNotifications,
+  roleToNotificationCode,
+} from '@/lib/notifications';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -17,6 +21,7 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAppointmentReminderNotifications(DEFAULT_CENTER_ID);
+  await ensurePreClassAttendanceReminderNotifications(DEFAULT_CENTER_ID);
 
   if (!hasNotificationModel()) {
     return NextResponse.json({ unreadCount: 0, items: [] });
