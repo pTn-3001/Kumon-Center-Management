@@ -1,7 +1,9 @@
 import { addDays, endOfDay, startOfDay } from 'date-fns';
 import { prisma } from '@/lib/prisma';
-import { getShiftTimeRange } from '@/lib/kumon';
+import { getShiftTimeRange, getSubjectLabel } from '@/lib/kumon';
 import type { ClassShift, Weekday } from '@/types';
+
+const VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
 function hasNotificationModel() {
   return Boolean((prisma as any).notification);
@@ -84,6 +86,28 @@ function weekdayFromDate(date: Date): Weekday | null {
   return (`T${day + 1}`) as Weekday;
 }
 
+function getVietnamNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: VIETNAM_TIMEZONE }));
+}
+
+function getVietnamDateKey(date: Date) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: VIETNAM_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  return formatter.format(date);
+}
+
+function getVietnamDayBounds(date: Date) {
+  const dateKey = getVietnamDateKey(date);
+  const from = new Date(`${dateKey}T00:00:00+07:00`);
+  const to = new Date(`${dateKey}T23:59:59.999+07:00`);
+  return { from, to, dateKey };
+}
+
 function normalizeClassShift(value: string): ClassShift | null {
   if (value === 'SHIFT_1' || value === 'Ca 1') return 'Ca 1';
   if (value === 'SHIFT_2' || value === 'Ca 2') return 'Ca 2';
@@ -91,6 +115,15 @@ function normalizeClassShift(value: string): ClassShift | null {
   if (value === 'SHIFT_4' || value === 'Ca 4') return 'Ca 4';
   if (value === 'SHIFT_5' || value === 'Ca 5') return 'Ca 5';
   return null;
+}
+
+function getWeekdayLabel(weekday: Weekday) {
+  if (weekday === 'T2') return 'Thứ Hai';
+  if (weekday === 'T3') return 'Thứ Ba';
+  if (weekday === 'T4') return 'Thứ Tư';
+  if (weekday === 'T5') return 'Thứ Năm';
+  if (weekday === 'T6') return 'Thứ Sáu';
+  return 'Thứ Bảy';
 }
 
 function getShiftFromStudyDays(studyDays: string, weekday: Weekday): ClassShift | null {
@@ -144,7 +177,7 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
     return;
   }
 
-  const now = new Date();
+  const now = getVietnamNow();
   const weekday = weekdayFromDate(now);
   if (!weekday) {
     return;
@@ -193,11 +226,14 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
         normalizeClassShift(String(group.classShift)) === resolvedClassShift
       ));
 
+      const shiftRange = getShiftTimeRange(weekday, resolvedClassShift);
+      const fallbackLabel = `${getSubjectLabel(enrollment.subjectCode)} - ${getWeekdayLabel(weekday)} - ${resolvedClassShift}: ${shiftRange}`;
+
       return {
         ...enrollment,
         resolvedClassShift,
         resolvedClassGroupId: matchedClassGroup?.id ?? null,
-        resolvedClassLabel: matchedClassGroup?.label ?? `${enrollment.subjectCode} - ${weekday}`,
+        resolvedClassLabel: matchedClassGroup?.label ?? fallbackLabel,
       };
     })
     .filter((item: PreClassEnrollmentRow | null): item is PreClassEnrollmentRow => Boolean(item));
@@ -220,8 +256,7 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
     return;
   }
 
-  const todayFrom = startOfDay(now);
-  const todayTo = endOfDay(now);
+  const { from: todayFrom, to: todayTo, dateKey: todayKey } = getVietnamDayBounds(now);
   const classGroupIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.resolvedClassGroupId).filter((value: number | null): value is number => Boolean(value))));
   const studentIds = Array.from(new Set(reminderCandidates.map((item: PreClassEnrollmentRow) => item.studentId)));
 
@@ -238,8 +273,6 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
   type AttendancePresenceRow = (typeof attendances)[number];
 
   const presentSet = new Set(attendances.map((item: AttendancePresenceRow) => `${item.classGroupId}-${item.studentId}`));
-  const todayKey = now.toISOString().slice(0, 10);
-
   await Promise.all(
     reminderCandidates
       .filter((item: PreClassEnrollmentRow) => {

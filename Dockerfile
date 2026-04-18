@@ -15,10 +15,15 @@ FROM base AS runner
 LABEL author="ptn3001 <trungnguyenphan3001@gmail.com>"
 
 # Install LibreOffice and fonts for certificate/PDF generation
-RUN apk add --no-cache libreoffice fontconfig ttf-dejavu
+RUN apk add --no-cache libreoffice fontconfig ttf-dejavu tzdata
 
 ENV NODE_ENV=production
 ENV PORT=3001
+
+# Set timezone to Vietnam
+ENV TZ=Asia/Ho_Chi_Minh
+RUN ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone
 
 # Create non-root runtime user
 RUN addgroup --system --gid 1001 nodejs

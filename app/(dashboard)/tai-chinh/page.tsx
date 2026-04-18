@@ -406,11 +406,11 @@ export default function FinancePage() {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Tổng thu" value={formatCurrency(summary.totalRevenue)} delta="Doanh thu" tone="emerald" />
-        <MetricCard label="Tổng chi" value={formatCurrency(summary.totalExpense)} delta="Chi phí" tone="amber" />
-        <MetricCard label="Cân đối" value={formatCurrency(summary.balance)} delta="Thu - Chi" tone="cyan" />
-        <MetricCard label="Loại chi lớn nhất" value={summary.topCategory} delta="Theo dữ liệu hiện tại" tone="slate" />
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Tổng thu" value={formatCurrency(summary.totalRevenue)} tone="emerald" />
+        <MetricCard label="Tổng chi" value={formatCurrency(summary.totalExpense)} tone="amber" />
+        <MetricCard label="Cân đối" value={formatCurrency(summary.balance)} tone="cyan" />
+        <MetricCard label="Loại chi lớn nhất" value={summary.topCategory} tone="slate" />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">

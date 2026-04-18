@@ -7,6 +7,7 @@ services:
       POSTGRES_PASSWORD: 30012004
       POSTGRES_DB: kumon_management_local_2026
       POSTGRES_INITDB_ARGS: --encoding=UTF8
+      TZ: Asia/Ho_Chi_Minh
     volumes:
       - ./docker-data/postgres:/var/lib/postgresql/data
     ports:
@@ -29,6 +30,7 @@ services:
       NODE_ENV: production
       PORT: 3001
       DATABASE_URL: postgresql://postgres:30012004@db:5432/kumon_management_local_2026
+      TZ: Asia/Ho_Chi_Minh
     volumes:
       - ./docker-data/temp:/app/temp
       - ./docker-data/certificates:/app/certificates
@@ -44,6 +46,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: kumon_management_cloudflared
+    environment:
+      TZ: Asia/Ho_Chi_Minh
     volumes:
       - C:\Users\User\.cloudflared:/etc/cloudflared
     command: tunnel run kumon
