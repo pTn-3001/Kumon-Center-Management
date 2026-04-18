@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Award, Printer, FileDown, Sparkles, Trash2 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,11 +15,15 @@ import type { CertificateRecord } from '@/types';
 export default function CertificatePage() {
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  const monthLabel = `tháng ${month}/${year}`;
 
   const fetchCertificates = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/certificates');
+      const response = await fetch(`/api/certificates?month=${month}&year=${year}`);
       const data = await response.json();
       if (Array.isArray(data)) {
         setCertificates(data);
@@ -28,7 +33,7 @@ export default function CertificatePage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [month, year]);
 
   useEffect(() => {
     fetchCertificates();
@@ -47,6 +52,56 @@ export default function CertificatePage() {
 
     const error = await response.json();
     alert(error.message || 'Không thể xóa giấy khen');
+  };
+
+  const handleExportReport = () => {
+    if (certificates.length === 0) {
+      alert('Không có dữ liệu giấy khen trong tháng để xuất báo cáo.');
+      return;
+    }
+
+    const groupedByStudentAndSubject = new Map<string, {
+      studentName: string;
+      subjectLabel: string;
+      levels: Set<string>;
+    }>();
+
+    certificates.forEach((certificate: CertificateRecord) => {
+      const subjectLabel = getSubjectLabel(certificate.subjectCode);
+      const key = `${certificate.studentName}__${certificate.subjectCode}`;
+      const current = groupedByStudentAndSubject.get(key) ?? {
+        studentName: certificate.studentName,
+        subjectLabel,
+        levels: new Set<string>(),
+      };
+
+      if (certificate.level && certificate.level.trim().length > 0) {
+        current.levels.add(certificate.level.trim());
+      }
+
+      groupedByStudentAndSubject.set(key, current);
+    });
+
+    const rows = Array.from(groupedByStudentAndSubject.values())
+      .sort((a, b) => {
+        const studentCompare = a.studentName.localeCompare(b.studentName, 'vi');
+        if (studentCompare !== 0) {
+          return studentCompare;
+        }
+
+        return a.subjectLabel.localeCompare(b.subjectLabel, 'vi');
+      })
+      .map((item, index) => ({
+        'Số thứ tự': index + 1,
+        'Họ tên học viên': item.studentName,
+        'Môn học': item.subjectLabel,
+        'Trình độ': item.levels.size > 0 ? Array.from(item.levels).join(', ') : '-',
+      }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Bao cao giay khen');
+    XLSX.writeFile(workbook, `bao-cao-giay-khen-${month}-${year}.xlsx`);
   };
 
   return (
@@ -111,10 +166,16 @@ export default function CertificatePage() {
       <Card className="glass-card">
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div>
-            <CardTitle>Giấy khen gần nhất</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Danh sách được lấy từ bảng certificates.</p>
+            <CardTitle>Danh sách giấy khen trong tháng</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Hiển thị toàn bộ giấy khen {monthLabel}.</p>
           </div>
-          <Badge variant="secondary">{loading ? 'Đang tải...' : `${certificates.length} bản ghi`}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">{loading ? 'Đang tải...' : `${certificates.length} bản ghi`}</Badge>
+            <Button onClick={handleExportReport}>
+              <FileDown className="mr-2 h-4 w-4" />
+              Xuất báo cáo
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <Table>
