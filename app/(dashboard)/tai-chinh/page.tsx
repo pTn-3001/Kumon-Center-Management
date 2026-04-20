@@ -120,6 +120,7 @@ function isRevenueItem(item: Pick<ApiFinanceItem, 'note'>) {
 }
 
 export default function FinancePage() {
+  const today = useMemo(() => new Date(), []);
   const [items, setItems] = useState<ApiFinancePayload>([]);
   const [staffItems, setStaffItems] = useState<ApiStaffItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,6 +134,8 @@ export default function FinancePage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [formSalaryStaffId, setFormSalaryStaffId] = useState('');
+  const [expenseFilterMonth, setExpenseFilterMonth] = useState(String(today.getMonth() + 1));
+  const [expenseFilterYear, setExpenseFilterYear] = useState(String(today.getFullYear()));
 
   const loadStaffItems = async () => {
     const staffRes = await fetch('/api/he-thong/staff', { cache: 'no-store' });
@@ -176,20 +179,54 @@ export default function FinancePage() {
     void loadStaffItems();
   }, [editingId, form.type]);
 
-  const expenseItems = useMemo(() => items.filter((item) => !isRevenueItem(item)), [items]);
+  const currentMonthKey = useMemo(() => today.toISOString().slice(0, 7), [today]);
+
+  const currentMonthItems = useMemo(
+    () => items.filter((item) => item.spentAt.slice(0, 7) === currentMonthKey),
+    [currentMonthKey, items]
+  );
+
+  const currentMonthExpenseItems = useMemo(() => currentMonthItems.filter((item) => !isRevenueItem(item)), [currentMonthItems]);
+
+  const filteredExpenseItems = useMemo(() => {
+    return items.filter((item) => {
+      if (isRevenueItem(item)) {
+        return false;
+      }
+
+      const spentDate = new Date(item.spentAt);
+      return (
+        spentDate.getFullYear() === Number(expenseFilterYear)
+        && spentDate.getMonth() + 1 === Number(expenseFilterMonth)
+      );
+    });
+  }, [expenseFilterMonth, expenseFilterYear, items]);
+
+  const expenseFilterYears = useMemo(() => {
+    const years = new Set<number>([today.getFullYear()]);
+    items.forEach((item) => {
+      if (!isRevenueItem(item)) {
+        years.add(new Date(item.spentAt).getFullYear());
+      }
+    });
+
+    return Array.from(years).sort((a, b) => b - a);
+  }, [items, today]);
 
   const summary = useMemo(() => {
-    const totalExpense = expenseItems.reduce((sum, item) => sum + item.amount, 0);
-    const totalRevenue = items.filter((item) => isRevenueItem(item)).reduce((sum, item) => sum + item.amount, 0);
+    const totalExpense = currentMonthExpenseItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalRevenue = currentMonthItems.filter((item) => isRevenueItem(item)).reduce((sum, item) => sum + item.amount, 0);
     const balance = totalRevenue - totalExpense;
-    const topCategory = expenseTypes.reduce((best, current) => {
-      const bestAmount = expenseItems.filter((item) => item.type === best).reduce((sum, item) => sum + item.amount, 0);
-      const currentAmount = expenseItems.filter((item) => item.type === current).reduce((sum, item) => sum + item.amount, 0);
+    const topCategory = currentMonthExpenseItems.length === 0
+      ? 'Không có'
+      : expenseTypes.reduce((best, current) => {
+      const bestAmount = currentMonthExpenseItems.filter((item) => item.type === best).reduce((sum, item) => sum + item.amount, 0);
+      const currentAmount = currentMonthExpenseItems.filter((item) => item.type === current).reduce((sum, item) => sum + item.amount, 0);
       return currentAmount > bestAmount ? current : best;
-    }, expenseTypes[0]);
+      }, expenseTypes[0]);
 
     return { totalExpense, totalRevenue, balance, topCategory };
-  }, [expenseItems, items]);
+  }, [currentMonthExpenseItems, currentMonthItems]);
 
   const contractStaffItems = useMemo(() => {
     const todayKey = new Date().toISOString().slice(0, 10);
@@ -406,11 +443,11 @@ export default function FinancePage() {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Tổng thu" value={formatCurrency(summary.totalRevenue)} tone="emerald" />
-        <MetricCard label="Tổng chi" value={formatCurrency(summary.totalExpense)} tone="amber" />
-        <MetricCard label="Cân đối" value={formatCurrency(summary.balance)} tone="cyan" />
-        <MetricCard label="Loại chi lớn nhất" value={summary.topCategory} tone="slate" />
+      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Tổng thu tháng" value={formatCurrency(summary.totalRevenue)} tone="emerald" />
+        <MetricCard label="Tổng chi tháng" value={formatCurrency(summary.totalExpense)} tone="amber" />
+        <MetricCard label="Cân đối tháng" value={formatCurrency(summary.balance)} tone="cyan" />
+        <MetricCard label="Loại chi lớn nhất tháng" value={summary.topCategory} tone="slate" />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
@@ -565,7 +602,31 @@ export default function FinancePage() {
         <CardHeader>
           <CardTitle>Danh sách chi tiền</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:max-w-md md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Tháng</Label>
+              <Select value={expenseFilterMonth} onValueChange={setExpenseFilterMonth}>
+                <SelectTrigger><SelectValue placeholder="Chọn tháng" /></SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, index) => {
+                    const month = String(index + 1);
+                    return <SelectItem key={month} value={month}>Tháng {month}</SelectItem>;
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Năm</Label>
+              <Select value={expenseFilterYear} onValueChange={setExpenseFilterYear}>
+                <SelectTrigger><SelectValue placeholder="Chọn năm" /></SelectTrigger>
+                <SelectContent>
+                  {expenseFilterYears.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <Table>
             <TableHeader>
               <TableRow>
@@ -578,7 +639,7 @@ export default function FinancePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {expenseItems.map((item) => (
+              {filteredExpenseItems.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell><Badge variant="secondary">{item.type}</Badge></TableCell>
                   <TableCell className="font-medium">{formatCurrency(item.amount)}</TableCell>
@@ -593,6 +654,11 @@ export default function FinancePage() {
                   </TableCell>
                 </TableRow>
               ))}
+              {filteredExpenseItems.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">Không có khoản chi trong tháng/năm đã chọn.</TableCell>
+                </TableRow>
+              ) : null}
             </TableBody>
           </Table>
         </CardContent>

@@ -52,7 +52,7 @@ function extractRoleFromToken(token: string | undefined): SessionRole | null {
   }
 }
 
-function isAllowedPath(role: SessionRole, pathname: string, searchParams: URLSearchParams) {
+function isAllowedPath(role: SessionRole, pathname: string, searchParams: URLSearchParams, method: string) {
   if (pathname === '/api/notifications' || pathname.startsWith('/api/notifications/')) {
     return true;
   }
@@ -62,14 +62,27 @@ function isAllowedPath(role: SessionRole, pathname: string, searchParams: URLSea
   }
 
   if (role === 'Giáo viên' || role === 'Trợ giảng') {
-    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/hoc-thuat', '/api/hoc-vien', '/api/lop-hoc', '/api/hoc-thuat'];
-    return allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/hoc-thuat', '/api/hoc-vien', '/api/lop-hoc', '/api/hoc-thuat', '/api/enrollments'];
+    const isPrefixAllowed = allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    if (isPrefixAllowed) {
+      return true;
+    }
+
+    if (pathname === '/api/tai-chinh' && (method === 'GET' || method === 'POST')) {
+      return true;
+    }
+
+    return false;
   }
 
   if (role === 'Tư vấn') {
-    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/tu-van', '/in-giay-khen', '/api/hoc-vien', '/api/lop-hoc', '/api/tu-van', '/api/certificates'];
+    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/tu-van', '/in-giay-khen', '/api/hoc-vien', '/api/lop-hoc', '/api/tu-van', '/api/certificates', '/api/enrollments'];
     const isPrefixAllowed = allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
     if (isPrefixAllowed) {
+      return true;
+    }
+
+    if (pathname === '/api/tai-chinh' && (method === 'GET' || method === 'POST')) {
       return true;
     }
 
@@ -113,7 +126,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (hasSession && role && !isPublicPath(pathname) && !isAllowedPath(role, pathname, searchParams)) {
+  if (hasSession && role && !isPublicPath(pathname) && !isAllowedPath(role, pathname, searchParams, request.method)) {
     if (pathname.startsWith('/api')) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }

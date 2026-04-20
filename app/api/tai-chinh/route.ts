@@ -100,7 +100,9 @@ export async function POST(request: NextRequest) {
   });
 
   const note = created.note || '';
-  if (note.startsWith('[SALARY]')) {
+  const shouldNotify = !body.skipNotification;
+
+  if (shouldNotify && note.startsWith('[SALARY]')) {
     const salaryMeta = parseSalaryMeta(note);
     const monthLabel = `${created.spentAt.getMonth() + 1}/${created.spentAt.getFullYear()}`;
     const amountText = `${Number(created.amount).toLocaleString('vi-VN')}đ`;
@@ -115,7 +117,7 @@ export async function POST(request: NextRequest) {
       message,
       targetRoles: ['ADMIN', 'CONSULTANT'],
     });
-  } else if (note.startsWith('[TUITION]')) {
+  } else if (shouldNotify && note.startsWith('[TUITION]')) {
     const tuitionMeta = parseTuitionMeta(note);
     const student = tuitionMeta.studentId
       ? await prisma.student.findUnique({ where: { id: tuitionMeta.studentId }, select: { fullName: true } })
@@ -129,7 +131,7 @@ export async function POST(request: NextRequest) {
       message: `Ghi nhận thu học phí học viên ${student?.fullName ?? 'không xác định'} tháng ${monthLabel}: ${Number(created.amount).toLocaleString('vi-VN')}đ.`,
       targetRoles: ['ADMIN', 'CONSULTANT'],
     });
-  } else if (!note.startsWith('[ADMISSION_FEE]')) {
+  } else if (shouldNotify && !note.startsWith('[ADMISSION_FEE]')) {
     await createNotification({
       centerId: DEFAULT_CENTER_ID,
       type: 'EXPENSE_CREATED',

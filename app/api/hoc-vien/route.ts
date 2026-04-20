@@ -133,13 +133,15 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  await createNotification({
-    centerId: DEFAULT_CENTER_ID,
-    type: 'NEW_STUDENT',
-    title: 'Học viên mới đăng ký',
-    message: `${created.fullName} vừa đăng ký học mới (ngày nhập học ${created.admissionDate.toLocaleDateString('vi-VN')}).`,
-    eventKey: `NEW_STUDENT_${created.id}`,
-  });
+  if (!body.skipNotification) {
+    await createNotification({
+      centerId: DEFAULT_CENTER_ID,
+      type: 'NEW_STUDENT',
+      title: 'Học viên mới đăng ký',
+      message: `${created.fullName} vừa đăng ký học mới (ngày nhập học ${created.admissionDate.toLocaleDateString('vi-VN')}).`,
+      eventKey: `NEW_STUDENT_${created.id}`,
+    });
+  }
 
   return NextResponse.json(
     {

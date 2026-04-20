@@ -101,18 +101,18 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Chính thức (lượt môn)" value={String(latestStats.activeStudents)} delta="Đang học" tone="emerald" />
         <MetricCard label="Học thử (lượt môn)" value={String(latestStats.trialStudents)} delta="Cần theo dõi" tone="amber" />
         <MetricCard label="Tư vấn" value={String(latestStats.leads)} delta="CRM theo pipeline" tone="cyan" />
-        <MetricCard label="Doanh thu tháng" value={formatCurrency(latestStats.monthlyRevenue)} delta={`Lãi gộp ${formatCurrency(revenueGap)}`} tone="slate" />
+        <MetricCard label="Doanh thu tháng" value={formatCurrency(latestStats.monthlyRevenue)} delta={revenueGap >= 0 ? `Lợi nhuận ${formatCurrency(revenueGap)}` : `Thâm hụt ${formatCurrency(Math.abs(revenueGap))}`} tone="slate" />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
         <Card className="glass-card overflow-hidden">
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <div>
-              <CardTitle>Dashboard học viên theo tháng</CardTitle>
+              <CardTitle>Tổng số học viên theo tháng</CardTitle>
             </div>
           </CardHeader>
           <div className="grid gap-3 px-6 pb-2 md:grid-cols-3">

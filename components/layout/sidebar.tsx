@@ -45,7 +45,7 @@ const mainNav: NavItem[] = [
     label: 'Lớp học',
     icon: BookOpen,
     children: [
-      { href: '/lop-hoc?tab=quan-ly', label: 'Quản lý lớp', tab: 'quan-ly' },
+      { href: '/lop-hoc?tab=quan-ly', label: 'Quản lý lớp học', tab: 'quan-ly' },
       { href: '/lop-hoc?tab=lich-su', label: 'Lịch sử điểm danh', tab: 'lich-su' },
     ],
   },

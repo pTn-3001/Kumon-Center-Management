@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { DEFAULT_CENTER_ID, ensureDefaultCenter, getVisibleStaffWhere, toNumber } from '@/lib/api-helpers';
 
 export const runtime = 'nodejs';
+const EXTRA_CLASS_NOTE_PREFIX = '[EXTRA_CLASS]';
 
 function toWeekday(value: unknown) {
   return value === 'T3' || value === 'T4' || value === 'T5' || value === 'T6' || value === 'T7' ? value : 'T2';
@@ -39,8 +40,22 @@ function fromStudentStatus(value: string) {
   return 'Chính thức';
 }
 
+function parseExtraClassGroupId(note: string | null) {
+  if (!note || !note.startsWith(EXTRA_CLASS_NOTE_PREFIX)) {
+    return null;
+  }
+
+  const payload = note.slice(EXTRA_CLASS_NOTE_PREFIX.length).trim();
+  const matched = /^\d+/.exec(payload);
+  if (!matched) {
+    return null;
+  }
+
+  return Number(matched[0]);
+}
+
 export async function GET() {
-  const [classGroups, students, staff, attendance, allEnrollments]: [any[], any[], any[], any[], any[]] = await Promise.all([
+  const [classGroups, students, staff, attendance, allEnrollments, extraSchedules]: [any[], any[], any[], any[], any[], any[]] = await Promise.all([
     prisma.classGroup.findMany({
       where: { centerId: DEFAULT_CENTER_ID },
       orderBy: { label: 'asc' },
@@ -83,6 +98,19 @@ export async function GET() {
       include: {
         student: { select: { id: true, fullName: true, status: true } },
       },
+    }),
+    prisma.personalSchedule.findMany({
+      where: {
+        centerId: DEFAULT_CENTER_ID,
+        note: {
+          startsWith: EXTRA_CLASS_NOTE_PREFIX,
+        },
+      },
+      orderBy: { scheduledAt: 'desc' },
+      include: {
+        student: { select: { id: true, fullName: true, status: true } },
+      },
+      take: 200,
     }),
   ]);
 
@@ -145,6 +173,29 @@ export async function GET() {
       makeUpClassGroupLabel: classGroups.find((group: any) => group.id === item.makeUpClassGroupId)?.label ?? null,
       studentName: item.student.fullName,
     })),
+    extraClassStudents: extraSchedules
+      .map((item: any) => {
+        const classGroupId = parseExtraClassGroupId(item.note);
+        if (!classGroupId) {
+          return null;
+        }
+
+        return {
+          id: item.id,
+          classGroupId,
+          studentId: item.studentId,
+          subjectCode: item.subjectCode,
+          classShift: fromClassShift(item.classShift),
+          scheduledAt: item.scheduledAt.toISOString(),
+          note: item.note,
+          student: {
+            id: item.student.id,
+            fullName: item.student.fullName,
+            status: fromStudentStatus(item.student.status),
+          },
+        };
+      })
+      .filter((item: any) => Boolean(item)),
   });
 }
 

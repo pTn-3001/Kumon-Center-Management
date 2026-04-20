@@ -962,6 +962,7 @@ function StudentsPageContent() {
             spentAt: `${monthKey}-01`,
             note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
             proofImage: null,
+            skipNotification: true,
           }),
         })
       );
@@ -969,6 +970,22 @@ function StudentsPageContent() {
       const responses = await Promise.all(requests);
       if (responses.some((response) => !response.ok)) {
         throw new Error('Không thể lưu học phí cho một số tháng');
+      }
+
+      const notifyResponse = await fetch(`/api/hoc-vien/${tuitionStudent.id}/notify-tuition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          months: selectedPaymentMonths,
+          totalAmount: selectedPaymentMonths.reduce(
+            (total, monthKey) => total + calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
+            0,
+          ),
+        }),
+      });
+
+      if (!notifyResponse.ok) {
+        throw new Error('Đã lưu học phí nhưng không thể gửi thông báo thu học phí');
       }
 
       await refreshFinanceItems();
@@ -1259,6 +1276,7 @@ function StudentsPageContent() {
         assignedStaffId: form.assignedStaffId ? Number(form.assignedStaffId) : null,
         intakeSource: statusFromAdmission === STATUS_OFFICIAL ? officialIntakeSource : null,
         admissionFeePaid: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeePaid : false,
+        skipNotification: true,
       };
 
       const response = await fetch('/api/hoc-vien', {
@@ -1336,6 +1354,14 @@ function StudentsPageContent() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'Đã đăng ký', convertedStudentId: targetStudentId }),
           });
+        }
+
+        const notifyResponse = await fetch(`/api/hoc-vien/${targetStudentId}/notify-new`, {
+          method: 'POST',
+        });
+
+        if (!notifyResponse.ok) {
+          throw new Error('Đã lưu học viên nhưng không thể gửi thông báo đăng ký mới');
         }
       }
 
@@ -1561,8 +1587,8 @@ function StudentsPageContent() {
       await Promise.all(
         targetIds.map((enrollmentId) =>
           updateEnrollment(enrollmentId, {
-            // Keep original subject start/report-B unchanged and store rejoin date for statistics.
             reenrollDate,
+            endDate: null,
             registrationType: 'Chinh thuc',
           })
         )
@@ -1590,7 +1616,7 @@ function StudentsPageContent() {
 
   return (
     <div className="space-y-6">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label={stats[0].label} value={String(stats[0].value)} delta="Theo tháng hiện tại" tone="amber" />
         <MetricCard label={stats[1].label} value={String(stats[1].value)} delta="Đang học" tone="emerald" />
         <MetricCard label={stats[2].label} value={String(stats[2].value)} delta="Cần theo dõi" tone="cyan" />
@@ -2241,15 +2267,15 @@ function StudentsPageContent() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {Array.from(new Set((reenrollStudent?.enrollments ?? []).filter((enrollment) => isEnrollmentDropped(enrollment)).map((enrollment) => enrollment.subjectCode))).map((subject) => (
-                    <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toan' : 'Tieng Anh'}</SelectItem>
+                    <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReenrollOpen(false)}>Huy</Button>
-            <Button onClick={() => void submitReenroll()}>Xac nhan</Button>
+            <Button variant="outline" onClick={() => setReenrollOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitReenroll()}>Xác nhận</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2570,6 +2596,17 @@ function StudentTable({
   onSelect,
   getTrialDaysLeft,
 }: StudentTableProps) {
+  const totalColumns = 7 + (showReportB ? 1 : 0) + (showTrialCountdown ? 1 : 0);
+  const mathEnrollmentCount = students.reduce(
+    (sum, student) => sum + student.enrollments.filter((enrollment) => enrollment.subjectCode === 'MATH').length,
+    0
+  );
+  const eflEnrollmentCount = students.reduce(
+    (sum, student) => sum + student.enrollments.filter((enrollment) => enrollment.subjectCode === 'EFL').length,
+    0
+  );
+  const totalEnrollmentCount = mathEnrollmentCount + eflEnrollmentCount;
+
   return (
     <Table>
       <TableHeader>
@@ -2671,6 +2708,23 @@ function StudentTable({
             </TableRow>
           );
         })}
+        <TableRow className="bg-slate-50/70">
+          <TableCell colSpan={totalColumns}>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <p className="text-sm font-semibold text-slate-800">
+                Tổng số học viên: <span className="text-slate-950">{totalEnrollmentCount}</span>
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <Badge variant="outline" style={{ backgroundColor: '#2e8db714', color: '#2e8db7', borderColor: '#2e8db740' }}>
+                  Toán: {mathEnrollmentCount}
+                </Badge>
+                <Badge variant="outline" style={{ backgroundColor: '#f0890014', color: '#f08900', borderColor: '#f0890040' }}>
+                  Tiếng Anh: {eflEnrollmentCount}
+                </Badge>
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
       </TableBody>
     </Table>
   );

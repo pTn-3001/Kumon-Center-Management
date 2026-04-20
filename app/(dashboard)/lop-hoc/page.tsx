@@ -61,13 +61,25 @@ type ApiAttendance = {
   studentName: string;
 };
 
-type EffectiveEnrollmentRow = ApiClassGroup['enrollments'][number] & { isMakeUp?: boolean };
+type ApiExtraClassStudent = {
+  id: number;
+  classGroupId: number;
+  studentId: number;
+  subjectCode: SubjectCode;
+  classShift: string;
+  scheduledAt: string;
+  note: string | null;
+  student: { id: number; fullName: string; status: string };
+};
+
+type EffectiveEnrollmentRow = ApiClassGroup['enrollments'][number] & { isMakeUp?: boolean; isExtra?: boolean };
 
 type ClassPayload = {
   classGroups: ApiClassGroup[];
   students: ApiStudent[];
   staff: Array<{ id: number; fullName: string; role: string }>;
   attendance: ApiAttendance[];
+  extraClassStudents: ApiExtraClassStudent[];
 };
 
 const chartColors = ['#2ca39d', '#d97706', '#ef4444', '#334155'];
@@ -75,7 +87,6 @@ const classTabs = ['quan-ly', 'lich-su'] as const;
 
 type ClassTab = typeof classTabs[number];
 
-// Generate fixed 12 classes
 const FIXED_CLASSES = [
   { subjectCode: 'MATH' as SubjectCode, weekday: 'T2' as Weekday, name: 'Toán - Thứ Hai' },
   { subjectCode: 'MATH' as SubjectCode, weekday: 'T3' as Weekday, name: 'Toán - Thứ Ba' },
@@ -108,6 +119,51 @@ function getShiftForWeekday(studyDays: string, weekday: Weekday, fallbackShift: 
   return normalizeClassShift(fallbackShift);
 }
 
+function getDateRangeForCurrentWeek() {
+  const today = new Date();
+  const day = today.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(today);
+  start.setDate(today.getDate() + mondayOffset);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return { start, end };
+}
+
+function getDateForWeekdayInCurrentWeek(weekday: Weekday) {
+  const weekdays: Weekday[] = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+  const index = weekdays.indexOf(weekday);
+  const { start } = getDateRangeForCurrentWeek();
+  const date = new Date(start);
+  date.setDate(start.getDate() + Math.max(index, 0));
+
+  return date.toISOString().slice(0, 10);
+}
+
+function toWeekdayFromDate(value: string) {
+  const day = new Date(value).getDay();
+  const map: Record<number, Weekday | null> = {
+    0: null,
+    1: 'T2',
+    2: 'T3',
+    3: 'T4',
+    4: 'T5',
+    5: 'T6',
+    6: 'T7',
+  };
+  return map[day] ?? null;
+}
+
+function formatStudentStatusLabel(status: string) {
+  if (status === 'OFFICIAL') return 'Chính thức';
+  if (status === 'TRIAL') return 'Học thử';
+  if (status === 'EXPIRED') return 'Hết hạn';
+  if (status === 'DROPPED') return 'Thôi học';
+  return status;
+}
+
 function ShiftChartTooltip({
   active,
   payload,
@@ -132,7 +188,7 @@ function ClassPageContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedStudentFromQuery = searchParams.get('studentId');
-  const [data, setData] = useState<ClassPayload>({ classGroups: [], students: [], staff: [], attendance: [] });
+  const [data, setData] = useState<ClassPayload>({ classGroups: [], students: [], staff: [], attendance: [], extraClassStudents: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedClass, setSelectedClass] = useState<{ subjectCode: SubjectCode; weekday: Weekday } | null>(null);
@@ -145,6 +201,9 @@ function ClassPageContent() {
   const [attendanceStatus, setAttendanceStatus] = useState<'Hiện diện' | 'Vắng'>('Hiện diện');
   const [makeUpClassKey, setMakeUpClassKey] = useState('none');
   const [makeUpClassShift, setMakeUpClassShift] = useState<ClassShift>('Ca 1');
+  const [extraStudentId, setExtraStudentId] = useState('');
+  const [extraStudentDate, setExtraStudentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [attendanceHistoryDate, setAttendanceHistoryDate] = useState(new Date().toISOString().slice(0, 10));
   const activeTabFromQuery = searchParams.get('tab');
   const currentTab: ClassTab = classTabs.includes(activeTabFromQuery as ClassTab) ? (activeTabFromQuery as ClassTab) : 'quan-ly';
 
@@ -181,6 +240,14 @@ function ClassPageContent() {
 
     void loadData();
   }, [defaultMathWeekday]);
+
+  useEffect(() => {
+    if (!selectedClass) {
+      return;
+    }
+
+    setExtraStudentDate(getDateForWeekdayInCurrentWeek(selectedClass.weekday));
+  }, [selectedClass]);
 
   const mergedClassGroups = useMemo(() => {
     const grouped = new Map<string, ApiClassGroup>();
@@ -232,18 +299,7 @@ function ClassPageContent() {
       .map((group) => group.id);
   }, [data.classGroups, selectedClass]);
 
-  const weekRange = useMemo(() => {
-    const today = new Date();
-    const day = today.getDay();
-    const mondayOffset = day === 0 ? -6 : 1 - day;
-    const start = new Date(today);
-    start.setDate(today.getDate() + mondayOffset);
-    start.setHours(0, 0, 0, 0);
-
-    const end = new Date(start);
-    end.setDate(start.getDate() + 7);
-    return { start, end };
-  }, []);
+  const weekRange = useMemo(() => getDateRangeForCurrentWeek(), []);
 
   const weeklyMakeUpMap = useMemo(() => {
     const sorted = [...data.attendance]
@@ -279,6 +335,34 @@ function ClassPageContent() {
     });
     return map;
   }, [data.classGroups]);
+
+  const weeklyExtraStudentsByClassKey = useMemo(() => {
+    const map = new Map<string, ApiExtraClassStudent[]>();
+
+    data.extraClassStudents.forEach((item) => {
+      const scheduledAt = new Date(item.scheduledAt);
+      if (!(scheduledAt >= weekRange.start && scheduledAt < weekRange.end)) {
+        return;
+      }
+
+      const classGroup = classGroupById.get(item.classGroupId);
+      if (!classGroup) {
+        return;
+      }
+
+      const weekday = toWeekdayFromDate(item.scheduledAt);
+      if (weekday !== classGroup.weekday) {
+        return;
+      }
+
+      const key = `${classGroup.subjectCode}-${classGroup.weekday}`;
+      const current = map.get(key) ?? [];
+      current.push(item);
+      map.set(key, current);
+    });
+
+    return map;
+  }, [classGroupById, data.extraClassStudents, weekRange.end, weekRange.start]);
 
   const effectiveEnrollmentsByClassKey = useMemo(() => {
     const result = new Map<string, EffectiveEnrollmentRow[]>();
@@ -322,11 +406,45 @@ function ClassPageContent() {
         });
       });
 
-      result.set(key, [...baseEnrollments, ...movedInRows]);
+      const weeklyExtraRows = weeklyExtraStudentsByClassKey.get(key) ?? [];
+      const extraRows: EffectiveEnrollmentRow[] = [];
+
+      weeklyExtraRows.forEach((item) => {
+        if (existingStudentIds.has(item.studentId)) {
+          return;
+        }
+
+        const sourceEnrollment =
+          allEnrollments.find((enrollment) => enrollment.studentId === item.studentId && enrollment.subjectCode === classItem.subjectCode)
+          ?? allEnrollments.find((enrollment) => enrollment.studentId === item.studentId);
+
+        extraRows.push({
+          id: sourceEnrollment?.id ?? -item.id,
+          studentId: item.studentId,
+          classGroupId: item.classGroupId,
+          subjectCode: classItem.subjectCode,
+          registrationType: sourceEnrollment?.registrationType ?? 'Học thêm tuần',
+          enrollmentType: sourceEnrollment?.enrollmentType ?? 'Theo lịch cá nhân',
+          studyDays: sourceEnrollment?.studyDays ?? `${classItem.weekday}(${item.classShift})`,
+          classShift: item.classShift,
+          startDate: sourceEnrollment?.startDate ?? item.scheduledAt,
+          endDate: sourceEnrollment?.endDate ?? null,
+          isExtra: true,
+          student: {
+            id: item.student.id,
+            fullName: item.student.fullName,
+            status: 'Học thêm',
+          },
+        });
+
+        existingStudentIds.add(item.studentId);
+      });
+
+      result.set(key, [...baseEnrollments, ...movedInRows, ...extraRows]);
     });
 
     return result;
-  }, [allEnrollments, classGroupById, data.classGroups, data.students, mergedClassGroups, weeklyMakeUpMap]);
+  }, [allEnrollments, classGroupById, data.classGroups, data.students, mergedClassGroups, weeklyExtraStudentsByClassKey, weeklyMakeUpMap]);
 
   const selectedClassEffectiveEnrollments = useMemo<EffectiveEnrollmentRow[]>(() => {
     if (!selectedClass) return [];
@@ -337,6 +455,11 @@ function ClassPageContent() {
   const selectedClassStudents = useMemo(() => {
     const map = new Map<number, { id: number; fullName: string; status: string }>();
     selectedClassEffectiveEnrollments.forEach((enrollment) => {
+      if (enrollment.isExtra) {
+        map.set(enrollment.student.id, { ...enrollment.student, status: 'Học thêm' });
+        return;
+      }
+
       if (enrollment.isMakeUp) {
         map.set(enrollment.student.id, { ...enrollment.student, status: 'Học bù' });
         return;
@@ -360,7 +483,8 @@ function ClassPageContent() {
 
   const statusData = useMemo(() => {
     const counts = selectedClassStudents.reduce<Record<string, number>>((acc, student) => {
-      acc[student.status] = (acc[student.status] ?? 0) + 1;
+      const label = formatStudentStatusLabel(student.status);
+      acc[label] = (acc[label] ?? 0) + 1;
       return acc;
     }, {});
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
@@ -393,6 +517,24 @@ function ClassPageContent() {
     };
     return map[day] ?? null;
   }, []);
+
+  const selectedClassExtraStudents = useMemo(() => {
+    if (!selectedClass) {
+      return [] as ApiExtraClassStudent[];
+    }
+
+    const key = `${selectedClass.subjectCode}-${selectedClass.weekday}`;
+    return weeklyExtraStudentsByClassKey.get(key) ?? [];
+  }, [selectedClass, weeklyExtraStudentsByClassKey]);
+
+  const extraStudentCandidates = useMemo(() => {
+    const existingIds = new Set(selectedClassStudents.map((item) => item.id));
+    return data.students.filter((student) => !existingIds.has(student.id));
+  }, [data.students, selectedClassStudents]);
+
+  const filteredAttendanceHistory = useMemo(() => {
+    return data.attendance.filter((record) => record.date.slice(0, 10) === attendanceHistoryDate);
+  }, [attendanceHistoryDate, data.attendance]);
 
   async function refreshData() {
     const response = await fetch('/api/lop-hoc', { cache: 'no-store' });
@@ -466,6 +608,38 @@ function ClassPageContent() {
     await refreshData();
   }
 
+  async function addWeeklyExtraStudent() {
+    if (!selectedClassGroup || !extraStudentId || !extraStudentDate) {
+      return;
+    }
+
+    const response = await fetch('/api/lop-hoc/extra-students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        classGroupId: selectedClassGroup.id,
+        studentId: Number(extraStudentId),
+        scheduledAt: extraStudentDate,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Không thể thêm học viên học thêm');
+    }
+
+    setExtraStudentId('');
+    await refreshData();
+  }
+
+  async function removeWeeklyExtraStudent(id: number) {
+    const response = await fetch(`/api/lop-hoc/extra-students/${id}`, { method: 'DELETE' });
+    if (!response.ok) {
+      throw new Error('Không thể xóa học viên học thêm');
+    }
+
+    await refreshData();
+  }
+
   if (loading) {
     return <div className="rounded-2xl border bg-white p-6 text-sm text-muted-foreground">Đang tải dữ liệu lớp học...</div>;
   }
@@ -486,7 +660,6 @@ function ClassPageContent() {
       <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-6">
         <TabsContent value="quan-ly" className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
-            {/* Left: Class Cards */}
             <div className="space-y-4">
               <Card className="glass-card">
                 <CardHeader>
@@ -516,9 +689,7 @@ function ClassPageContent() {
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="font-semibold text-slate-950">
-                                {classItem.name}
-                              </p>
+                              <p className="font-semibold text-slate-950">{classItem.name}</p>
                               <p className="text-xs text-muted-foreground">{enrollmentCount} học viên</p>
                             </div>
                           </div>
@@ -530,10 +701,8 @@ function ClassPageContent() {
               </Card>
             </div>
 
-            {/* Right: Details & Stats */}
             {selectedClassGroup ? (
               <div className="space-y-4">
-                {/* Statistics */}
                 <div className="grid gap-4">
                   <Card className="border bg-white">
                     <CardHeader>
@@ -571,7 +740,6 @@ function ClassPageContent() {
                   </Card>
                 </div>
 
-                {/* Student List */}
                 <Card className="border bg-white">
                   <CardHeader>
                     <CardTitle className="text-base">Danh sách học viên ({selectedClassEffectiveEnrollments.length})</CardTitle>
@@ -583,7 +751,10 @@ function ClassPageContent() {
                           <div key={enrollment.id} className="rounded-lg border bg-muted/20 p-3 text-sm">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-medium text-slate-950">{enrollment.student.fullName}</p>
-                              {enrollment.isMakeUp ? <Badge variant="secondary">Học bù</Badge> : null}
+                              <div className="flex items-center gap-2">
+                                {enrollment.isMakeUp ? <Badge variant="secondary">Học bù</Badge> : null}
+                                {enrollment.isExtra ? <Badge variant="warning">Học thêm</Badge> : null}
+                              </div>
                             </div>
                             <p className="text-xs text-muted-foreground">{enrollment.registrationType} · {enrollment.enrollmentType}</p>
                           </div>
@@ -595,7 +766,59 @@ function ClassPageContent() {
                   </CardContent>
                 </Card>
 
-                {/* Attendance */}
+                <Card className="border bg-white">
+                  <CardHeader>
+                    <CardTitle className="text-base">Thêm học viên học thêm trong tuần</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Học viên</Label>
+                        <Select value={extraStudentId} onValueChange={setExtraStudentId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn học viên học thêm" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {extraStudentCandidates.map((student) => (
+                              <SelectItem key={student.id} value={String(student.id)}>
+                                {student.fullName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Ngày học thêm</Label>
+                        <Input type="date" value={extraStudentDate} onChange={(event) => setExtraStudentDate(event.target.value)} />
+                      </div>
+                    </div>
+                    <Button type="button" className="w-full" onClick={() => void addWeeklyExtraStudent()}>
+                      Thêm học viên học thêm
+                    </Button>
+
+                    <div className="space-y-2 rounded-xl border p-3">
+                      <p className="text-sm font-medium text-slate-900">Danh sách học thêm trong tuần ({selectedClassExtraStudents.length})</p>
+                      {selectedClassExtraStudents.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Chưa có học viên học thêm tuần này.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedClassExtraStudents.map((item) => (
+                            <div key={item.id} className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-sm">
+                              <div>
+                                <p className="font-medium text-slate-900">{item.student.fullName}</p>
+                                <p className="text-xs text-muted-foreground">{formatDate(item.scheduledAt)}</p>
+                              </div>
+                              <Button size="sm" variant="destructive" onClick={() => void removeWeeklyExtraStudent(item.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
                 <Card className="border bg-white">
                   <CardHeader>
                     <CardTitle className="text-base">Điểm danh</CardTitle>
@@ -610,7 +833,9 @@ function ClassPageContent() {
                         <SelectContent>
                           {selectedClassStudents.map((student) => (
                             <SelectItem key={student.id} value={String(student.id)}>
-                              {student.fullName}{student.status === 'Học bù' ? ' (Học bù)' : ''}
+                              {student.fullName}
+                              {student.status === 'Học bù' ? ' (Học bù)' : ''}
+                              {student.status === 'Học thêm' ? ' (Học thêm)' : ''}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -704,19 +929,24 @@ function ClassPageContent() {
             <CardHeader>
               <CardTitle>Lịch sử điểm danh</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div className="max-w-xs space-y-2">
+                <Label>Lọc theo ngày</Label>
+                <Input type="date" value={attendanceHistoryDate} onChange={(event) => setAttendanceHistoryDate(event.target.value)} />
+              </div>
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Lớp</TableHead>
                     <TableHead>Học viên</TableHead>
                     <TableHead>Ngày</TableHead>
+                    <TableHead>Giờ vào lớp</TableHead>
                     <TableHead>Trạng thái</TableHead>
                     <TableHead className="text-right">Hành động</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.attendance.map((record) => (
+                  {filteredAttendanceHistory.map((record) => (
                     <TableRow key={record.id}>
                       <TableCell>
                         {(() => {
@@ -727,11 +957,8 @@ function ClassPageContent() {
                         })()}
                       </TableCell>
                       <TableCell>{record.studentName}</TableCell>
-                      <TableCell>
-                        {record.status === 'Hiện diện'
-                          ? `${formatDate(record.date)} ${formatTime24(record.date)}`
-                          : formatDate(record.date)}
-                      </TableCell>
+                      <TableCell>{formatDate(record.date)}</TableCell>
+                      <TableCell>{record.status === 'Hiện diện' ? formatTime24(record.date) : '--:--'}</TableCell>
                       <TableCell>
                         <Badge variant={record.status === 'Hiện diện' ? 'success' : 'destructive'}>{record.status}</Badge>
                       </TableCell>
@@ -742,6 +969,11 @@ function ClassPageContent() {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {filteredAttendanceHistory.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">Không có dữ liệu điểm danh cho ngày đã chọn.</TableCell>
+                    </TableRow>
+                  ) : null}
                 </TableBody>
               </Table>
             </CardContent>

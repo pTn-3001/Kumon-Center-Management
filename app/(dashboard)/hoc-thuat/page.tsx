@@ -170,12 +170,14 @@ type KhoSubTab = typeof khoSubTabs[number];
 
 const WORKSHEET_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN]';
 const WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN_WRITING]';
+const WORKSHEET_DAILY_NOTE_PREFIX = '[WS_DAILY_NOTE]';
 const WORKSHEET_ASSIGNMENT_BATCH_NOTE_PREFIX = '[WS_ASSIGNMENT_BATCH]';
 const WORKSHEET_WRITING_BATCH_NOTE_PREFIX = '[WS_WRITING_BATCH]';
 const WORKSHEET_EXTRA_NOTE_PREFIX = '[WS_EXTRA]';
 const WORKSHEET_LOAN_NOTE_PREFIX = '[WS_LOAN]';
 const WORKSHEET_RETURN_NOTE_PREFIX = '[WS_RETURN]';
 const WORKSHEET_STOCK_TRACKING_PREFIX = '[WS_STOCK_TRACKING]';
+const WORKSHEET_ASSIGN_NOTE_DELIMITER = '::NOTE::';
 
 function isAtLevel(level: string) {
   return /^AT-[A-Z0-9]+$/i.test(level.trim());
@@ -210,6 +212,7 @@ function isWorksheetAssignmentUsage(usage: AcademicWorksheetUsage) {
   return (
     usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)
     || usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)
+    || usage.note?.startsWith(WORKSHEET_DAILY_NOTE_PREFIX)
     || false
   );
 }
@@ -220,14 +223,22 @@ function extractWorksheetCodeFromNote(note: string | null) {
   }
 
   if (note.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-    return note.slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length).trim().toUpperCase();
+    return note
+      .slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length)
+      .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
+      .trim()
+      .toUpperCase();
   }
 
   if (!note.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
     return '';
   }
 
-  return note.slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length).trim().toUpperCase();
+  return note
+    .slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length)
+    .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
+    .trim()
+    .toUpperCase();
 }
 
 function normalizeWorksheetCode(value: string) {
@@ -1331,7 +1342,7 @@ function AcademicWarehousePageContent() {
                   </div>
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="space-y-3">
-                      <p className="text-sm font-semibold text-blue-700">Toán</p>
+                      <p className="text-sm font-semibold text-[#2e8db7]">Toán</p>
                       {filteredWorksheetStudents.map((student) => {
                         const mathKey = `${student.id}-MATH`;
                         const level = student.currentLevels?.MATH ?? worksheetAssessmentByTrack.get(mathKey)?.level ?? '-';
@@ -1343,7 +1354,7 @@ function AcademicWarehousePageContent() {
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-slate-950">{student.fullName}</p>
                                 <div className="flex items-center gap-2">
-                                  <Badge className="bg-blue-600 text-white">Toán</Badge>
+                                  <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
                                   <Badge variant="secondary">DT</Badge>
                                 </div>
                               </div>
@@ -1354,7 +1365,7 @@ function AcademicWarehousePageContent() {
                             <Link key={`MATH-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=MATH`} className="block rounded-2xl border border-blue-200 bg-blue-50 p-4 transition hover:border-blue-400 hover:bg-blue-100">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <Badge className="bg-blue-600 text-white">Toán</Badge>
+                                <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
                               </div>
                               <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
                             </Link>
@@ -1364,7 +1375,7 @@ function AcademicWarehousePageContent() {
                     </div>
 
                     <div className="space-y-3">
-                      <p className="text-sm font-semibold text-emerald-700">Tiếng Anh</p>
+                      <p className="text-sm font-semibold text-[#f08900]">Tiếng Anh</p>
                       {filteredWorksheetStudents.map((student) => {
                         const eflKey = `${student.id}-EFL`;
                         const level = student.currentLevels?.EFL ?? worksheetAssessmentByTrack.get(eflKey)?.level ?? '-';
@@ -1376,7 +1387,7 @@ function AcademicWarehousePageContent() {
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-slate-950">{student.fullName}</p>
                                 <div className="flex items-center gap-2">
-                                  <Badge className="bg-emerald-600 text-white">Tiếng Anh</Badge>
+                                  <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
                                   <Badge variant="secondary">DT</Badge>
                                 </div>
                               </div>
@@ -1387,7 +1398,7 @@ function AcademicWarehousePageContent() {
                             <Link key={`EFL-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=EFL`} className="block rounded-2xl border border-emerald-200 bg-emerald-50 p-4 transition hover:border-emerald-400 hover:bg-emerald-100">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <Badge className="bg-emerald-600 text-white">Tiếng Anh</Badge>
+                                <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
                               </div>
                               <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
                             </Link>
