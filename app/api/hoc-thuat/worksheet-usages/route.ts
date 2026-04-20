@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { ensureCenter, parseDateInput, runtime, toNumber } from '../_helpers';
+import { ensureCenter, parseDateInput, toNumber } from '../_helpers';
 import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
 import { ensureLowStockNotifications, ensureWorksheetLoanReminders } from '@/lib/notifications';
 
-export { runtime };
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   const body = await request.json();

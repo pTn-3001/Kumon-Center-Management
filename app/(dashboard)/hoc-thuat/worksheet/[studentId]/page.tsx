@@ -90,7 +90,6 @@ const WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN_WRITING]';
 const WORKSHEET_ASSIGNMENT_BATCH_NOTE_PREFIX = '[WS_ASSIGNMENT_BATCH]';
 const WORKSHEET_DAILY_NOTE_PREFIX = '[WS_DAILY_NOTE]';
 const WORKSHEET_ASSIGN_NOTE_DELIMITER = '::NOTE::';
-const DEFAULT_ASSIGNMENT_NOTE = 'Học viên luyện tốc độ và độ chính xác theo lộ trình tuần này, tập trung phần còn yếu, hoàn thành trước buổi tới và ghi lại khó khăn để giáo viên điều chỉnh bài phù hợp hơn.';
 
 const levelBySubject: Record<SubjectCode, string[]> = {
   MATH: ['6A', '5A', '4A', '3A', '2A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'AT-4A', 'AT-3A', 'AT-2A', 'AT-A', 'AT-B', 'AT-C', 'AT-D', 'AT-E', 'AT-F', 'AT-G', 'AT-H', 'AT-I', 'AT-J', 'AT-K', 'AT-L', 'AT-M', 'AT-N', 'DT-K1', 'DT-K2', 'DT-P1', 'DT-P2', 'DT-P3', 'DT-P4', 'DT-P5', 'DT-P6', 'DT-M1', 'DT-M2', 'DT-M3', 'DT-H'],
@@ -347,7 +346,7 @@ export default function StudentWorksheetLogPage() {
   const [writingNumber, setWritingNumber] = useState('21');
   const [saving, setSaving] = useState(false);
   const [panelError, setPanelError] = useState('');
-  const [assignmentNote, setAssignmentNote] = useState(DEFAULT_ASSIGNMENT_NOTE);
+  const [assignmentNote, setAssignmentNote] = useState('');
   const [currentLevelInput, setCurrentLevelInput] = useState('');
   const [savingCurrentLevel, setSavingCurrentLevel] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
@@ -712,7 +711,7 @@ export default function StudentWorksheetLogPage() {
     setIncludeWriting(Boolean(mainRow?.worksheet) && Boolean(writingRow?.worksheet));
     setWritingLevel(writingParts?.level ?? 'ZI');
     setWritingNumber(writingParts?.number ?? '21');
-    setAssignmentNote(mainRow?.note || writingRow?.note || DEFAULT_ASSIGNMENT_NOTE);
+    setAssignmentNote(mainRow?.note || writingRow?.note || '');
     setPanelError('');
     setIsPanelOpen(true);
   }
@@ -882,7 +881,7 @@ export default function StudentWorksheetLogPage() {
               <TableBody>
                 {monthDays.map((dateValue) => {
                   const rows = rowsByDate.get(dateValue) ?? [];
-                  const rowNote = rows.find((item) => item.note.trim())?.note ?? DEFAULT_ASSIGNMENT_NOTE;
+                  const rowNote = rows.find((item) => item.note.trim())?.note ?? '';
                   const worksheetRows = rows
                     .filter((row) => Boolean(row.worksheet))
                     .slice()
@@ -922,7 +921,7 @@ export default function StudentWorksheetLogPage() {
                           }}
                           title={rowNote}
                         >
-                          {rowNote}
+                          {rowNote || 'Không có ghi chú'}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1129,7 +1128,7 @@ export default function StudentWorksheetLogPage() {
                 className="mt-2 min-h-[116px] bg-white"
                 value={assignmentNote}
                 onChange={(event) => setAssignmentNote(event.target.value)}
-                placeholder={DEFAULT_ASSIGNMENT_NOTE}
+                placeholder="Nhập ghi chú (không bắt buộc)"
               />
               <p className="mt-1 text-xs text-muted-foreground">Số từ hiện tại: {assignmentNoteWordCount}</p>
             </div>

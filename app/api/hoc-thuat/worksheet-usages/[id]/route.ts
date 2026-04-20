@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { parseDateInput, runtime, toNumber } from '../../_helpers';
+import { parseDateInput, toNumber } from '../../_helpers';
 
-export { runtime };
+export const runtime = 'nodejs';
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params;

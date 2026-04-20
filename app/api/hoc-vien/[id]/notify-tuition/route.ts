@@ -13,8 +13,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ message: 'ID học viên không hợp lệ' }, { status: 400 });
   }
 
-  const body = await request.json().catch(() => ({} as { months?: string[]; totalAmount?: number }));
-  const months = Array.isArray(body.months) ? body.months.filter((item) => typeof item === 'string' && /^\d{4}-\d{2}$/.test(item)) : [];
+  const body = (await request.json().catch(() => ({}))) as { months?: unknown; totalAmount?: number };
+  const months = Array.isArray(body.months)
+    ? body.months.filter((item: unknown): item is string => typeof item === 'string' && /^\d{4}-\d{2}$/.test(item))
+    : [];
   const totalAmount = Number(body.totalAmount ?? 0);
 
   const student = await prisma.student.findUnique({
