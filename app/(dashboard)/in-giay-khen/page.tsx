@@ -24,12 +24,26 @@ export default function CertificatePage() {
     setLoading(true);
     try {
       const response = await fetch(`/api/certificates?month=${month}&year=${year}`);
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const bodyPreview = (await response.text()).slice(0, 120);
+        throw new Error(`API trả về dữ liệu không hợp lệ (${response.status}). ${bodyPreview}`);
+      }
+
       const data = await response.json();
+      if (!response.ok) {
+        const message = typeof data?.message === 'string' ? data.message : 'Không thể tải danh sách giấy khen';
+        throw new Error(message);
+      }
+
       if (Array.isArray(data)) {
         setCertificates(data);
+      } else {
+        throw new Error('Dữ liệu giấy khen không đúng định dạng');
       }
     } catch (error) {
       console.error('Failed to fetch certificates', error);
+      alert(error instanceof Error ? error.message : 'Không thể tải danh sách giấy khen');
     } finally {
       setLoading(false);
     }
@@ -47,6 +61,13 @@ export default function CertificatePage() {
     const response = await fetch(`/api/certificates?id=${id}`, { method: 'DELETE' });
     if (response.ok) {
       await fetchCertificates();
+      return;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const bodyPreview = (await response.text()).slice(0, 120);
+      alert(`Không thể xóa giấy khen (${response.status}). ${bodyPreview}`);
       return;
     }
 

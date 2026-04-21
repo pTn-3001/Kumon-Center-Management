@@ -76,7 +76,7 @@ function isAllowedPath(role: SessionRole, pathname: string, searchParams: URLSea
   }
 
   if (role === 'Tư vấn') {
-    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/tu-van', '/in-giay-khen', '/api/hoc-vien', '/api/lop-hoc', '/api/tu-van', '/api/certificates', '/api/enrollments'];
+    const allowedPrefixes = ['/hoc-vien', '/lop-hoc', '/tu-van', '/in-giay-khen', '/api/hoc-vien', '/api/lop-hoc', '/api/tu-van', '/api/certificates', '/api/enrollments', '/api/students'];
     const isPrefixAllowed = allowedPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
     if (isPrefixAllowed) {
       return true;

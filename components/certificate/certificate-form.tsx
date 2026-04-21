@@ -53,9 +53,19 @@ export function CertificateForm({ onSaved }: CertificateFormProps) {
     const loadStudents = async () => {
       try {
         const response = await fetch('/api/students');
+        if (!response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          const fallbackText = contentType.includes('application/json')
+            ? ((await response.json()) as { message?: string }).message || ''
+            : (await response.text()).slice(0, 120);
+          throw new Error(fallbackText || `Không thể tải gợi ý học viên (${response.status})`);
+        }
+
         const data = await response.json();
         if (Array.isArray(data)) {
           setStudents(data);
+        } else {
+          throw new Error('Dữ liệu gợi ý học viên không hợp lệ');
         }
       } catch (error) {
         console.error('Unable to fetch students for certificate autocomplete', error);
