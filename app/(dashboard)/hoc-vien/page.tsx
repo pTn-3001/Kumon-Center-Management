@@ -307,6 +307,7 @@ function StudentsPageContent() {
   const [admissionRegistrationType, setAdmissionRegistrationType] = useState<AdmissionRegistrationType>('Chinh thuc');
   const [officialIntakeSource, setOfficialIntakeSource] = useState<IntakeSource>('new');
   const [admissionFeePaid, setAdmissionFeePaid] = useState(false);
+  const [admissionFeePromotion, setAdmissionFeePromotion] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
   const [assignOpen, setAssignOpen] = useState(false);
@@ -1260,8 +1261,9 @@ function StudentsPageContent() {
         .filter((value): value is string => Boolean(value))
         .sort((a, b) => a.localeCompare(b));
       const defaultReportBDate = orderedReportBDates[0] ?? null;
+      const admissionFeeConfirmed = admissionFeePaid || admissionFeePromotion;
 
-      if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && !admissionFeePaid) {
+      if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && !admissionFeeConfirmed) {
         throw new Error('Vui lòng xác nhận đã đóng phí nhập học 300.000đ');
       }
 
@@ -1275,7 +1277,8 @@ function StudentsPageContent() {
         reportBDate: defaultReportBDate,
         assignedStaffId: form.assignedStaffId ? Number(form.assignedStaffId) : null,
         intakeSource: statusFromAdmission === STATUS_OFFICIAL ? officialIntakeSource : null,
-        admissionFeePaid: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeePaid : false,
+        admissionFeePaid: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeeConfirmed : false,
+        admissionFeePromotion: statusFromAdmission === STATUS_OFFICIAL && officialIntakeSource === 'new' ? admissionFeePromotion : false,
         skipNotification: true,
       };
 
@@ -1328,6 +1331,7 @@ function StudentsPageContent() {
           admissionRegistrationType === 'Chinh thuc' &&
           officialIntakeSource === 'new' &&
           admissionFeePaid &&
+          !admissionFeePromotion &&
           !hasAdmissionFeeRecorded(targetStudentId)
         ) {
           const admissionFeeRevenueDate = defaultReportBDate ?? studentAdmissionDate;
@@ -1372,6 +1376,7 @@ function StudentsPageContent() {
       setAdmissionRegistrationType('Chinh thuc');
       setOfficialIntakeSource('new');
       setAdmissionFeePaid(false);
+      setAdmissionFeePromotion(false);
       await refreshStudents();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi khi lưu nhập học');
@@ -1683,7 +1688,14 @@ function StudentsPageContent() {
                   <div className="space-y-2"><Label>Địa chỉ</Label><Input value={form.address} onChange={(e) => setForm((current) => ({ ...current, address: e.target.value }))} /></div>
                   <div className="space-y-2">
                     <Label>Loại đăng ký</Label>
-                    <Select value={admissionRegistrationType} onValueChange={(value) => setAdmissionRegistrationType(value as AdmissionRegistrationType)}>
+                    <Select value={admissionRegistrationType} onValueChange={(value) => {
+                      const nextValue = value as AdmissionRegistrationType;
+                      setAdmissionRegistrationType(nextValue);
+                      if (nextValue !== 'Chinh thuc') {
+                        setAdmissionFeePaid(false);
+                        setAdmissionFeePromotion(false);
+                      }
+                    }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="Chinh thuc">Chính thức</SelectItem>
@@ -1701,7 +1713,14 @@ function StudentsPageContent() {
                     <>
                       <div className="space-y-2">
                         <Label>Nguồn</Label>
-                        <Select value={officialIntakeSource} onValueChange={(value) => setOfficialIntakeSource(value as IntakeSource)}>
+                        <Select value={officialIntakeSource} onValueChange={(value) => {
+                          const nextSource = value as IntakeSource;
+                          setOfficialIntakeSource(nextSource);
+                          if (nextSource !== 'new') {
+                            setAdmissionFeePaid(false);
+                            setAdmissionFeePromotion(false);
+                          }
+                        }}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="transfer">Chuyển đến từ trung tâm khác</SelectItem>
@@ -1717,9 +1736,29 @@ function StudentsPageContent() {
                             <input
                               type="checkbox"
                               checked={admissionFeePaid}
-                              onChange={(event) => setAdmissionFeePaid(event.target.checked)}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setAdmissionFeePaid(checked);
+                                if (checked) {
+                                  setAdmissionFeePromotion(false);
+                                }
+                              }}
                             />
-                            <span>Đã đóng phí nhập học 300.000d</span>
+                            <span>Đã đóng phí nhập học 300.000đ</span>
+                          </label>
+                          <label className="flex items-center gap-2 rounded-xl border p-3 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={admissionFeePromotion}
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setAdmissionFeePromotion(checked);
+                                if (checked) {
+                                  setAdmissionFeePaid(false);
+                                }
+                              }}
+                            />
+                            <span>Khuyến mãi phí nhập học</span>
                           </label>
                         </div>
                       ) : null}
@@ -1849,7 +1888,7 @@ function StudentsPageContent() {
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">Sinh nhật: {student.birthDate ? formatDate(student.birthDate) : '-'}</p>
-                      <p className="text-sm text-muted-foreground flex items-center gap-1"><CalendarDays className="h-4 w-4" /> Con {student.daysUntil} ngay</p>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1"><CalendarDays className="h-4 w-4" /> Còn {student.daysUntil} ngày</p>
                     </CardContent>
                   </Card>
                 ))}
@@ -2507,7 +2546,7 @@ function StudentDetailPanel({
             {showTrialCountdown ? (
               <p>
                 <span className="text-muted-foreground">Đếm ngược học thử:</span>{' '}
-                {daysLeft !== null && daysLeft >= 0 ? `Con ${daysLeft} ngay` : `Qua han ${Math.abs(daysLeft ?? 0)} ngay`}
+                {daysLeft !== null && daysLeft >= 0 ? `Còn ${daysLeft} ngày` : `Quá hạn ${Math.abs(daysLeft ?? 0)} ngày`}
               </p>
             ) : null}
           </div>
@@ -2669,7 +2708,7 @@ function StudentTable({
                 <div className="space-y-1 text-sm">
                   {student.enrollments.length
                     ? student.enrollments.map((enrollment) => <div key={enrollment.id} className="rounded-lg bg-muted/30 px-2 py-1">{getSubjectBadge(enrollment.subjectCode)}</div>)
-                    : <span className="text-muted-foreground">Chua co mon</span>}
+                    : <span className="text-muted-foreground">Chưa có môn học</span>}
                 </div>
               </TableCell>
               <TableCell>
@@ -2697,9 +2736,9 @@ function StudentTable({
               {showTrialCountdown ? (
                 <TableCell>
                   {daysLeft !== null && daysLeft >= 0 ? (
-                    <Badge className="whitespace-nowrap" variant="warning">Con {daysLeft} ngay</Badge>
+                    <Badge className="whitespace-nowrap" variant="warning">Còn {daysLeft} ngày</Badge>
                   ) : (
-                    <Badge className="whitespace-nowrap" variant="destructive">Qua han {Math.abs(daysLeft ?? 0)} ngay</Badge>
+                    <Badge className="whitespace-nowrap" variant="destructive">Quá hạn {Math.abs(daysLeft ?? 0)} ngày</Badge>
                   )}
                 </TableCell>
               ) : null}

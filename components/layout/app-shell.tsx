@@ -31,6 +31,7 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
   const [passwordError, setPasswordError] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
   const notificationsRef = useRef<HTMLDivElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
 
   const loadNotifications = useCallback(async () => {
     const response = await fetch('/api/notifications', { cache: 'no-store' });
@@ -91,6 +92,20 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
       document.removeEventListener('mousedown', handleOutsideClick);
     };
   }, [notificationsOpen]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!menuOpen) return;
+      if (!userMenuRef.current) return;
+      if (userMenuRef.current.contains(event.target as Node)) return;
+      setMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [menuOpen]);
 
   const markNotificationsRead = async () => {
     const response = await fetch('/api/notifications', { method: 'PATCH' });
@@ -198,7 +213,7 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
                   </div>
                 ) : null}
               </div>
-              <div className="relative">
+              <div ref={userMenuRef} className="relative">
                 <button
                   type="button"
                   onClick={() => setMenuOpen((current) => !current)}
