@@ -26,7 +26,7 @@ export async function POST(_request: NextRequest, context: { params: Promise<{ i
     centerId: DEFAULT_CENTER_ID,
     type: 'NEW_STUDENT',
     title: 'Học viên mới đăng ký',
-    message: `${student.fullName} vừa đăng ký học mới (ngày nhập học ${student.admissionDate.toLocaleDateString('vi-VN')}).`,
+    message: `${student.fullName} vừa đăng ký học mới (ngày nhập học ${student.admissionDate.toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', })}).`,
     eventKey: `NEW_STUDENT_${student.id}`,
   });
 

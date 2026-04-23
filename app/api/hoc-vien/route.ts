@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
       centerId: DEFAULT_CENTER_ID,
       type: 'NEW_STUDENT',
       title: 'Học viên mới đăng ký',
-      message: `${created.fullName} vừa đăng ký học mới (ngày nhập học ${created.admissionDate.toLocaleDateString('vi-VN')}).`,
+      message: `${created.fullName} vừa đăng ký học mới (ngày nhập học ${created.admissionDate.toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', })}).`,
       eventKey: `NEW_STUDENT_${created.id}`,
     });
   }

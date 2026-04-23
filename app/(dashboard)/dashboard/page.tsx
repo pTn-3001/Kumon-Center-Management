@@ -247,7 +247,7 @@ export default function DashboardPage() {
                 <div key={item.id} className="flex items-center justify-between rounded-2xl border bg-white px-4 py-3 text-sm">
                   <div>
                     <p className="font-semibold text-slate-950">{(item.note || '').startsWith('[ADMISSION_FEE]') ? 'Phí nhập học' : 'Thu học phí'}</p>
-                    <p className="text-muted-foreground">{new Date(item.spentAt).toLocaleDateString('vi-VN')}</p>
+                    <p className="text-muted-foreground">{new Date(item.spentAt).toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit',  year: 'numeric', })}</p>
                   </div>
                   <Badge variant="success">{formatCurrency(item.amount)}</Badge>
                 </div>
@@ -267,7 +267,7 @@ export default function DashboardPage() {
                 <div key={item.id} className="flex items-center justify-between text-sm">
                   <div>
                     <p className="font-medium text-slate-950">{item.type}</p>
-                    <p className="text-muted-foreground">{new Date(item.spentAt).toLocaleDateString('vi-VN')}</p>
+                    <p className="text-muted-foreground">{new Date(item.spentAt).toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit',  year: 'numeric', })}</p>
                   </div>
                   <span className="font-semibold text-slate-900">{formatCurrency(item.amount)}</span>
                 </div>

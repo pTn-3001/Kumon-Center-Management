@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   });
 
   if (created.status === 'ABSENT') {
-    const attendanceDate = created.date.toLocaleDateString('vi-VN');
+    const attendanceDate = created.date.toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', });
     const makeUpClass = created.makeUpClassGroupId
       ? await prisma.classGroup.findUnique({ where: { id: created.makeUpClassGroupId }, select: { label: true } })
       : null;

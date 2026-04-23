@@ -44,10 +44,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ message: 'Giờ ra phải sau giờ vào' }, { status: 400 });
   }
 
+  const workDateValue = new Date(`${workDate}T00:00:00Z`);
+  if (Number.isNaN(workDateValue.getTime())) {
+    return NextResponse.json({ message: 'Ngày làm không hợp lệ' }, { status: 400 });
+  }
+
   const created = await prisma.staffTimeEntry.create({
     data: {
       staffId,
-      workDate: new Date(`${workDate}T00:00:00`),
+      workDate: workDateValue,
       clockIn,
       clockOut,
       note: typeof body.note === 'string' && body.note.length > 0 ? body.note : null,

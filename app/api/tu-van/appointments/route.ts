@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     centerId: DEFAULT_CENTER_ID,
     type: 'APPOINTMENT_NEW',
     title: 'Có lịch hẹn mới',
-    message: `${lead?.fullName ?? 'Học viên'} có lịch hẹn mới vào ${created.scheduledAt.toLocaleDateString('vi-VN')}.`,
+    message: `${lead?.fullName ?? 'Học viên'} có lịch hẹn mới vào ${created.scheduledAt.toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', })}.`,
     targetRoles: ['ADMIN', 'CONSULTANT'],
     eventKey: `APPOINTMENT_NEW_${created.id}`,
   });

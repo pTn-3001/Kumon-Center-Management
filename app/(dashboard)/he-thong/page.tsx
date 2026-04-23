@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ShieldCheck, UserPlus, UsersRound, KeyRound, X, Mail, Phone } from 'lucide-react';
+import { ShieldCheck, UserPlus, UsersRound, KeyRound, X, Mail, Phone, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -117,6 +117,10 @@ export default function SystemPage() {
     clockOutTime: '17:00',
     note: '',
   });
+  const [timeEntryMonth, setTimeEntryMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [paidSalaryMonthKeys, setPaidSalaryMonthKeys] = useState<Set<string>>(new Set());
   const [portalReady, setPortalReady] = useState(false);
 
@@ -146,6 +150,46 @@ export default function SystemPage() {
         return sum + hours;
       }, 0);
   }, [selectedStaff]);
+
+  const selectedStaffMonthKey = timeEntryMonth || currentMonthKey;
+
+  const selectedStaffTimeEntriesForMonth = useMemo(() => {
+    if (!selectedStaff || !isPartTimeStaff(selectedStaff)) return [] as StaffTimeEntry[];
+    return (selectedStaff.timeEntries ?? []).filter((entry) => entry.workDate.startsWith(selectedStaffMonthKey));
+  }, [selectedStaff, selectedStaffMonthKey]);
+
+  const selectedStaffTimeEntryGroups = useMemo(() => {
+    const groups = new Map<string, { entries: StaffTimeEntry[]; totalHours: number }>();
+
+    selectedStaffTimeEntriesForMonth.forEach((entry) => {
+      const current = groups.get(entry.workDate);
+      const inTime = new Date(entry.clockIn).getTime();
+      const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
+      const hours = Math.max((outTime - inTime) / (1000 * 60 * 60), 0);
+
+      if (current) {
+        current.entries.push(entry);
+        current.totalHours += hours;
+      } else {
+        groups.set(entry.workDate, {
+          entries: [entry],
+          totalHours: hours,
+        });
+      }
+    });
+
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, group]) => ({ date, ...group }));
+  }, [selectedStaffTimeEntriesForMonth]);
+
+  const selectedStaffFilteredMonthTotalHours = useMemo(() => {
+    return selectedStaffTimeEntriesForMonth.reduce((sum, entry) => {
+      const inTime = new Date(entry.clockIn).getTime();
+      const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
+      return sum + Math.max((outTime - inTime) / (1000 * 60 * 60), 0);
+    }, 0);
+  }, [selectedStaffTimeEntriesForMonth]);
 
   const selectedStaffCurrentMonthPaid = useMemo(() => {
     if (!selectedStaff || !isPartTimeStaff(selectedStaff)) return false;
@@ -817,17 +861,39 @@ export default function SystemPage() {
 
                   <Button type="button" className="mt-3 w-full" onClick={() => void addTimeEntry()}>Lưu chấm công</Button>
 
-                  <div className="mt-3 space-y-2">
-                    {(selectedStaff.timeEntries ?? []).map((entry) => (
-                      <div key={entry.id} className="rounded-lg border bg-slate-50 p-2 text-xs">
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{entry.workDate}: {new Date(entry.clockIn).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - {entry.clockOut ? new Date(entry.clockOut).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'}</span>
-                          <button type="button" className="text-red-600" onClick={() => void deleteTimeEntry(entry.id)}>xóa</button>
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                    <div className="space-y-1">
+                      <Label>Tháng/năm hiển thị</Label>
+                      <Input type="month" value={timeEntryMonth} onChange={(event) => setTimeEntryMonth(event.target.value)} />
+                    </div>
+                    <div className="rounded-2xl border bg-slate-50 p-3 text-sm">
+                      <p className="font-medium">Tổng giờ</p>
+                      <p className="mt-1 text-lg font-semibold">{selectedStaffFilteredMonthTotalHours.toFixed(1)} giờ</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                    {selectedStaffTimeEntryGroups.map((group) => (
+                      <div key={group.date} className="rounded-2xl border bg-slate-50 p-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold">{new Date(group.date).toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', })} - {group.totalHours.toFixed(1)} giờ</p>
                         </div>
-                        {entry.note ? <p className="mt-1 text-muted-foreground">{entry.note}</p> : null}
+                        <div className="mt-2 space-y-2">
+                          {group.entries.map((entry) => (
+                            <div key={entry.id} className="flex flex-col gap-2 rounded-lg border bg-white p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="font-medium">
+                                  {new Date(entry.clockIn).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} - {entry.clockOut ? new Date(entry.clockOut).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                                </p>
+                                {entry.note ? <p className="text-muted-foreground">{entry.note}</p> : null}
+                              </div>
+                              <button type="button" className="text-red-600" onClick={() => void deleteTimeEntry(entry.id)}><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
-                    {(selectedStaff.timeEntries ?? []).length === 0 ? <p className="text-xs text-muted-foreground">Chưa có bản ghi chấm công giờ.</p> : null}
+                    {selectedStaffTimeEntryGroups.length === 0 ? <p className="text-xs text-muted-foreground">Chưa có bản ghi chấm công trong tháng đã chọn.</p> : null}
                   </div>
                 </div>
               ) : null}

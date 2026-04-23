@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
       centerId: DEFAULT_CENTER_ID,
       type: 'EXPENSE_CREATED',
       title: 'Phát sinh chi tiền',
-      message: `Chi ${fromFinanceType(created.type)} ngày ${created.spentAt.toLocaleDateString('vi-VN')}: ${Number(created.amount).toLocaleString('vi-VN')}đ.`,
+      message: `Chi ${fromFinanceType(created.type)} ngày ${created.spentAt.toLocaleDateString('vi-VN', {  day: '2-digit',  month: '2-digit', year: 'numeric', })}: ${Number(created.amount).toLocaleString('vi-VN')}đ.`,
       targetRoles: ['ADMIN', 'CONSULTANT'],
     });
   }
