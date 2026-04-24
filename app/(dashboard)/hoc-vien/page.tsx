@@ -283,8 +283,10 @@ function StudentsPageContent() {
   const [reportBYearFilter, setReportBYearFilter] = useState<string>('all');
 
   const [birthdayFilter, setBirthdayFilter] = useState<BirthdayFilter>('all');
-  const [tuitionMonthFilter, setTuitionMonthFilter] = useState(String(new Date().getMonth() + 1));
-  const [tuitionYearFilter, setTuitionYearFilter] = useState(String(new Date().getFullYear()));
+  const [tuitionMonthFilter, setTuitionMonthFilter] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [editOpen, setEditOpen] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({
@@ -651,41 +653,11 @@ function StudentsPageContent() {
     ];
   }, [students, officialStudents, trialStudents, leaveStudents]);
 
-  const paymentYears = useMemo(() => {
-    const years = new Set<number>([new Date().getFullYear()]);
-
-    students.forEach((student) => {
-      years.add(parseISO(student.admissionDate).getFullYear());
-      if (student.reportBDate) {
-        years.add(parseISO(student.reportBDate).getFullYear());
-      }
-
-      student.enrollments.forEach((enrollment) => {
-        years.add(parseISO(enrollment.startDate).getFullYear());
-        if (enrollment.reportBDate) {
-          years.add(parseISO(enrollment.reportBDate).getFullYear());
-        }
-      });
-    });
-
-    financeItems.forEach((item) => {
-      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
-        return;
-      }
-
-      const monthMatch = /month=(\d{4})-\d{2}/.exec(item.note);
-      if (monthMatch) {
-        years.add(Number(monthMatch[1]));
-      }
-    });
-
-    return Array.from(years).sort((a, b) => b - a);
-  }, [students, financeItems]);
-
   const availablePaymentMonths = useMemo(() => {
     const result: Array<{ key: string; label: string; month: number; year: number }> = [];
-    const baseYear = Number(tuitionYearFilter);
-    const baseMonth = Number(tuitionMonthFilter);
+    const [yearStr, monthStr] = tuitionMonthFilter.split('-');
+    const baseYear = Number(yearStr);
+    const baseMonth = Number(monthStr);
     const base = new Date(baseYear, baseMonth - 1, 1);
 
     for (let offset = 0; offset < 12; offset += 1) {
@@ -697,12 +669,9 @@ function StudentsPageContent() {
     }
 
     return result;
-  }, [tuitionMonthFilter, tuitionYearFilter]);
+  }, [tuitionMonthFilter]);
 
-  const selectedFilterMonthKey = useMemo(
-    () => `${tuitionYearFilter}-${String(Number(tuitionMonthFilter)).padStart(2, '0')}`,
-    [tuitionMonthFilter, tuitionYearFilter]
-  );
+  const selectedFilterMonthKey = tuitionMonthFilter;
 
   const paidMap = useMemo(() => {
     const map = new Set<string>();
@@ -718,6 +687,28 @@ function StudentsPageContent() {
       }
 
       map.add(`${studentIdMatch[1]}-${monthMatch[1]}`);
+    });
+    return map;
+  }, [financeItems]);
+
+  const tuitionPaymentDetailsMap = useMemo(() => {
+    const map = new Map<string, { paymentDate: string; paymentMethod: string }>();
+    financeItems.forEach((item) => {
+      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
+        return;
+      }
+
+      const studentIdMatch = /studentId=(\d+)/.exec(item.note);
+      const monthMatch = /month=(\d{4}-\d{2})/.exec(item.note);
+      const methodMatch = /method=([^;]+)/.exec(item.note);
+      if (!studentIdMatch || !monthMatch) {
+        return;
+      }
+
+      map.set(`${studentIdMatch[1]}-${monthMatch[1]}`, {
+        paymentDate: item.spentAt.slice(0, 10),
+        paymentMethod: methodMatch ? methodMatch[1] : 'Không rõ',
+      });
     });
     return map;
   }, [financeItems]);
@@ -741,12 +732,16 @@ function StudentsPageContent() {
         const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
         const subjectCount = Math.max(1, activeEnrollments.length || student.enrollments.length);
         const estimatedAmount = calculateStudentTuitionForMonth(student, selectedFilterMonthKey, activeEnrollments);
-        const paid = paidMap.has(`${student.id}-${selectedFilterMonthKey}`);
+        const key = `${student.id}-${selectedFilterMonthKey}`;
+        const paid = paidMap.has(key);
+        const paymentDetails = tuitionPaymentDetailsMap.get(key);
         return {
           student,
           subjectCount,
           estimatedAmount,
           paid,
+          paymentDate: paymentDetails?.paymentDate ?? null,
+          paymentMethod: paymentDetails?.paymentMethod ?? null,
         };
       })
       .filter((item) => item.estimatedAmount > 0)
@@ -757,7 +752,7 @@ function StudentsPageContent() {
         return !item.paid;
       })
       .sort((a, b) => Number(a.paid) - Number(b.paid));
-  }, [officialStudents, paidMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+  }, [officialStudents, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
 
   const tuitionDialogAmount = useMemo(() => {
     if (!tuitionStudent) {
@@ -936,9 +931,8 @@ function StudentsPageContent() {
   }
 
   function openTuitionDialog(student: ApiStudent) {
-    const currentMonthKey = `${tuitionYearFilter}-${String(Number(tuitionMonthFilter)).padStart(2, '0')}`;
     setTuitionStudent(student);
-    setSelectedPaymentMonths([currentMonthKey]);
+    setSelectedPaymentMonths([tuitionMonthFilter]);
     setPaymentMethod('Tiền mặt');
     setTuitionDialogOpen(true);
   }
@@ -1787,20 +1781,7 @@ function StudentsPageContent() {
                             <SelectItem value="paid">Đã đóng</SelectItem>
                           </SelectContent>
                         </Select>
-                        <div className="grid grid-cols-2 gap-3 lg:col-span-2">
-                          <Select value={tuitionMonthFilter} onValueChange={setTuitionMonthFilter}>
-                            <SelectTrigger><SelectValue placeholder="Tháng" /></SelectTrigger>
-                            <SelectContent>
-                              {Array.from({ length: 12 }).map((_, idx) => <SelectItem key={idx + 1} value={String(idx + 1)}>Tháng {idx + 1}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          <Select value={tuitionYearFilter} onValueChange={setTuitionYearFilter}>
-                            <SelectTrigger><SelectValue placeholder="Năm" /></SelectTrigger>
-                            <SelectContent>
-                              {paymentYears.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <Input type="month" value={tuitionMonthFilter} onChange={(event) => setTuitionMonthFilter(event.target.value)} />
                       </>
                     ) : currentTab === 'hoc-thu' ? (
                       <Select value={trialStatusFilter} onValueChange={(value) => setTrialStatusFilter(value as TrialStatusFilter)}>
@@ -1902,7 +1883,7 @@ function StudentsPageContent() {
             <TabsContent value="chua-thu-hoc-phi" className="space-y-4">
               <Card className="border bg-white">
                 <CardHeader>
-                  <CardTitle className="text-lg">Danh sách học phí tháng {tuitionMonthFilter}/{tuitionYearFilter}</CardTitle>
+                  <CardTitle className="text-lg">Danh sách học phí tháng {tuitionMonthFilter.split('-')[1]}/{tuitionMonthFilter.split('-')[0]}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <Table>
@@ -1912,6 +1893,8 @@ function StudentsPageContent() {
                         <TableHead>Số môn</TableHead>
                         <TableHead>Học phí/tháng</TableHead>
                         <TableHead>Trạng thái</TableHead>
+                        <TableHead>Ngày thu</TableHead>
+                        <TableHead>Hình thức</TableHead>
                         <TableHead className="text-right">Hành động</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1924,9 +1907,11 @@ function StudentsPageContent() {
                           <TableCell>
                             <Badge variant={row.paid ? 'success' : 'warning'}>{row.paid ? 'Đã đóng' : 'Chưa đóng'}</Badge>
                           </TableCell>
+                          <TableCell>{row.paymentDate ? formatDate(row.paymentDate) : '-'}</TableCell>
+                          <TableCell>{row.paymentMethod ?? '-'}</TableCell>
                           <TableCell>
                             <div className="flex justify-end">
-                              {!row.paid ? <Button size="sm" onClick={() => openTuitionDialog(row.student)}><CircleDollarSign className="mr-2 h-4 w-4" /> Đóng học phí</Button> : null}
+                              {!row.paid ? <Button size="sm" onClick={() => openTuitionDialog(row.student)}><CircleDollarSign className="h-4 w-4" /></Button> : null}
                             </div>
                           </TableCell>
                         </TableRow>
