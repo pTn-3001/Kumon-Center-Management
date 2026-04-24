@@ -1343,68 +1343,72 @@ function AcademicWarehousePageContent() {
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="space-y-3">
                       <p className="text-sm font-semibold text-[#2e8db7]">Toán</p>
-                      {filteredWorksheetStudents.map((student) => {
-                        const mathKey = `${student.id}-MATH`;
-                        const level = student.currentLevels?.MATH ?? worksheetAssessmentByTrack.get(mathKey)?.level ?? '-';
-                        const progress = worksheetProgressByTrack.get(mathKey) ?? '-';
-                        const isMathDtTrack = isDtLevel(level);
-                        return (
-                          isMathDtTrack ? (
-                            <div key={`MATH-${student.id}`} className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 opacity-80">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <div className="flex items-center gap-2">
-                                  <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
-                                  <Badge variant="secondary">DT</Badge>
+                      {filteredWorksheetStudents
+                        .filter((student) => student.subjects?.includes('MATH'))
+                        .map((student) => {
+                          const mathKey = `${student.id}-MATH`;
+                          const level = student.currentLevels?.MATH ?? worksheetAssessmentByTrack.get(mathKey)?.level ?? '-';
+                          const progress = worksheetProgressByTrack.get(mathKey) ?? '-';
+                          const isMathDtTrack = isDtLevel(level);
+                          return (
+                            isMathDtTrack ? (
+                              <div key={`MATH-${student.id}`} className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 opacity-80">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-semibold text-slate-950">{student.fullName}</p>
+                                  <div className="flex items-center gap-2">
+                                    <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
+                                    <Badge variant="secondary">DT</Badge>
+                                  </div>
                                 </div>
+                                <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">DT chỉ quản lý ở Nhập kho/Tồn kho và Thêm bài thi, không soạn bài.</p>
                               </div>
-                              <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">DT chỉ quản lý ở Nhập kho/Tồn kho và Thêm bài thi, không soạn bài.</p>
-                            </div>
-                          ) : (
-                            <Link key={`MATH-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=MATH`} className="block rounded-2xl border border-blue-200 bg-blue-50 p-4 transition hover:border-blue-400 hover:bg-blue-100">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
-                              </div>
-                              <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
-                            </Link>
-                          )
-                        );
-                      })}
+                            ) : (
+                              <Link key={`MATH-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=MATH`} className="block rounded-2xl border border-blue-200 bg-blue-50 p-4 transition hover:border-blue-400 hover:bg-blue-100">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-semibold text-slate-950">{student.fullName}</p>
+                                  <Badge className="bg-[#2e8db7] text-white">Toán</Badge>
+                                </div>
+                                <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
+                              </Link>
+                            )
+                          );
+                        })}
                     </div>
 
                     <div className="space-y-3">
                       <p className="text-sm font-semibold text-[#f08900]">Tiếng Anh</p>
-                      {filteredWorksheetStudents.map((student) => {
-                        const eflKey = `${student.id}-EFL`;
-                        const level = student.currentLevels?.EFL ?? worksheetAssessmentByTrack.get(eflKey)?.level ?? '-';
-                        const progress = worksheetProgressByTrack.get(eflKey) ?? '-';
-                        const isEflDtTrack = isDtLevel(level);
-                        return (
-                          isEflDtTrack ? (
-                            <div key={`EFL-${student.id}`} className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 opacity-80">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <div className="flex items-center gap-2">
-                                  <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
-                                  <Badge variant="secondary">DT</Badge>
+                      {filteredWorksheetStudents
+                        .filter((student) => student.subjects?.includes('EFL'))
+                        .map((student) => {
+                          const eflKey = `${student.id}-EFL`;
+                          const level = student.currentLevels?.EFL ?? worksheetAssessmentByTrack.get(eflKey)?.level ?? '-';
+                          const progress = worksheetProgressByTrack.get(eflKey) ?? '-';
+                          const isEflDtTrack = isDtLevel(level);
+                          return (
+                            isEflDtTrack ? (
+                              <div key={`EFL-${student.id}`} className="block rounded-2xl border border-slate-200 bg-slate-50 p-4 opacity-80">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-semibold text-slate-950">{student.fullName}</p>
+                                  <div className="flex items-center gap-2">
+                                    <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
+                                    <Badge variant="secondary">DT</Badge>
+                                  </div>
                                 </div>
+                                <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
+                                <p className="mt-1 text-xs text-muted-foreground">DT chỉ quản lý ở Nhập kho/Tồn kho và Thêm bài thi, không soạn bài.</p>
                               </div>
-                              <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
-                              <p className="mt-1 text-xs text-muted-foreground">DT chỉ quản lý ở Nhập kho/Tồn kho và Thêm bài thi, không soạn bài.</p>
-                            </div>
-                          ) : (
-                            <Link key={`EFL-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=EFL`} className="block rounded-2xl border border-emerald-200 bg-emerald-50 p-4 transition hover:border-emerald-400 hover:bg-emerald-100">
-                              <div className="flex items-center justify-between gap-2">
-                                <p className="font-semibold text-slate-950">{student.fullName}</p>
-                                <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
-                              </div>
-                              <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
-                            </Link>
-                          )
-                        );
-                      })}
+                            ) : (
+                              <Link key={`EFL-${student.id}`} href={`/hoc-thuat/worksheet/${student.id}?subject=EFL`} className="block rounded-2xl border border-emerald-200 bg-emerald-50 p-4 transition hover:border-emerald-400 hover:bg-emerald-100">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-semibold text-slate-950">{student.fullName}</p>
+                                  <Badge className="bg-[#f08900] text-white">Tiếng Anh</Badge>
+                                </div>
+                                <p className="mt-2 text-sm text-slate-700">Level: {level} · Tiến độ: {progress}</p>
+                              </Link>
+                            )
+                          );
+                        })}
                     </div>
                   </div>
                 </CardContent>

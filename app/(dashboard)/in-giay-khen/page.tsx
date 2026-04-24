@@ -224,8 +224,7 @@ export default function CertificatePage() {
                   <TableCell>{formatDate(certificate.receivedAt)}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="destructive" size="sm" onClick={() => handleDelete(certificate.id)}>
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Xóa
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </TableCell>
                 </TableRow>

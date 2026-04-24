@@ -20,6 +20,9 @@ type StudentRow = {
 
 export async function GET() {
   const students: StudentRow[] = await prisma.student.findMany({
+    where: {
+      status: { in: ['OFFICIAL', 'TRIAL'] },
+    },
     orderBy: { fullName: 'asc' },
     include: {
       enrollments: {

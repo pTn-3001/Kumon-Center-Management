@@ -105,21 +105,11 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  const student = existingStudent ?? await prisma.student.create({
-    data: {
-      centerId: center.id,
-      fullName: body.studentName,
-      gender: 'OTHER',
-      admissionDate: receivedAt,
-      fatherFullName: 'Chưa cập nhật',
-      fatherPhone: 'Chưa cập nhật',
-      motherFullName: 'Chưa cập nhật',
-      motherPhone: 'Chưa cập nhật',
-      address: 'Chưa cập nhật',
-      status: 'OFFICIAL',
-      reportB: false,
-    },
-  });
+  if (!existingStudent || !['OFFICIAL', 'TRIAL'].includes(existingStudent.status)) {
+    return NextResponse.json({ message: 'Chỉ có thể in giấy khen cho học viên chính thức hoặc học thử' }, { status: 400 });
+  }
+
+  const student = existingStudent;
 
   await prisma.certificateRecord.create({
     data: {
