@@ -1841,6 +1841,8 @@ function StudentsPageContent() {
                     selectedStudentId={selectedOfficialStudent?.id ?? null}
                     statusVariant="success"
                     showReportB
+                    reportBMonthFilter={reportBMonthFilter}
+                    reportBYearFilter={reportBYearFilter}
                     onSelect={setSelectedStudentId}
                   />
                 </div>
@@ -1855,6 +1857,8 @@ function StudentsPageContent() {
                     selectedStudentId={selectedLeaveStudent?.id ?? null}
                     statusVariant="destructive"
                     showReportB
+                    reportBMonthFilter={reportBMonthFilter}
+                    reportBYearFilter={reportBYearFilter}
                     onSelect={setSelectedStudentId}
                   />
                 </div>
@@ -2447,6 +2451,8 @@ type StudentTableProps = {
   statusVariant: 'success' | 'warning' | 'destructive';
   showReportB?: boolean;
   showTrialCountdown?: boolean;
+  reportBMonthFilter?: string;
+  reportBYearFilter?: string;
   onSelect: (studentId: number) => void;
   getTrialDaysLeft?: (student: ApiStudent) => number;
 };
@@ -2632,16 +2638,35 @@ function StudentTable({
   statusVariant,
   showReportB,
   showTrialCountdown,
+  reportBMonthFilter,
+  reportBYearFilter,
   onSelect,
   getTrialDaysLeft,
 }: StudentTableProps) {
   const totalColumns = 7 + (showReportB ? 1 : 0) + (showTrialCountdown ? 1 : 0);
+
+  const isEnrollmentVisibleByReportBFilter = useCallback((enrollment: ApiStudent['enrollments'][0], student: ApiStudent) => {
+    if (!reportBMonthFilter || reportBMonthFilter === 'all' && (!reportBYearFilter || reportBYearFilter === 'all')) return true;
+
+    const effectiveReportBDate = enrollment.reportBDate ?? student.reportBDate;
+    if (!effectiveReportBDate) return false;
+
+    const reportBDate = parseISO(effectiveReportBDate);
+    const monthOk = !reportBMonthFilter || reportBMonthFilter === 'all' || reportBDate.getMonth() + 1 === Number(reportBMonthFilter);
+    const yearOk = !reportBYearFilter || reportBYearFilter === 'all' || reportBDate.getFullYear() === Number(reportBYearFilter);
+    return monthOk && yearOk;
+  }, [reportBMonthFilter, reportBYearFilter]);
+
   const mathEnrollmentCount = students.reduce(
-    (sum, student) => sum + student.enrollments.filter((enrollment) => enrollment.subjectCode === 'MATH').length,
+    (sum, student) => sum + student.enrollments.filter((enrollment) =>
+      enrollment.subjectCode === 'MATH' && isEnrollmentVisibleByReportBFilter(enrollment, student)
+    ).length,
     0
   );
   const eflEnrollmentCount = students.reduce(
-    (sum, student) => sum + student.enrollments.filter((enrollment) => enrollment.subjectCode === 'EFL').length,
+    (sum, student) => sum + student.enrollments.filter((enrollment) =>
+      enrollment.subjectCode === 'EFL' && isEnrollmentVisibleByReportBFilter(enrollment, student)
+    ).length,
     0
   );
   const totalEnrollmentCount = mathEnrollmentCount + eflEnrollmentCount;
