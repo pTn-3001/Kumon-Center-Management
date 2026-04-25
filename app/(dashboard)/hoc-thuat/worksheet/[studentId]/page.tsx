@@ -76,6 +76,7 @@ type AssignmentRow = {
   worksheet: string;
   subjectCode: SubjectCode;
   isWriting: boolean;
+  isCorrection: boolean;
   note: string;
 };
 
@@ -89,6 +90,7 @@ const WORKSHEET_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN]';
 const WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN_WRITING]';
 const WORKSHEET_ASSIGNMENT_BATCH_NOTE_PREFIX = '[WS_ASSIGNMENT_BATCH]';
 const WORKSHEET_DAILY_NOTE_PREFIX = '[WS_DAILY_NOTE]';
+const WORKSHEET_CORRECTION_NOTE_PREFIX = '[WS_CORRECTION]';
 const WORKSHEET_ASSIGN_NOTE_DELIMITER = '::NOTE::';
 
 const levelBySubject: Record<SubjectCode, string[]> = {
@@ -185,25 +187,320 @@ function isWritingNumberAllowed(level: string, numberText: string) {
   return false;
 }
 
+function getNextWorksheetNumber(currentNumber: number) {
+  return currentNumber + 10;
+}
+
+function getNextWorksheetCode(worksheetCode: string) {
+  const parts = splitWorksheetCode(worksheetCode);
+  if (!parts) {
+    return null;
+  }
+
+  const nextNumber = getNextWorksheetNumber(Number(parts.number));
+  return composeWorksheetCode(parts.level, String(nextNumber));
+}
+
+function isCorrectionUsage(usage: AcademicWorksheetUsage) {
+  return usage.note?.startsWith(WORKSHEET_CORRECTION_NOTE_PREFIX) || false;
+}
+
+type WorksheetStepPattern = '433' | '55' | '10';
+
+function getNumericWorksheetHistory(codes: string[]) {
+  return codes
+    .map((code) => splitWorksheetCode(code))
+    .filter((parts): parts is { level: string; number: string } => parts !== null && !isFixedWorksheetCodeLevel(parts.level))
+    .map((parts) => Number(parts.number))
+    .filter((number) => Number.isFinite(number))
+    .filter((number, index, array) => index === 0 || number !== array[index - 1]);
+}
+
+function getNextNumberWithAllowedTails(currentNumber: number, allowedTails: number[]) {
+  for (let offset = 1; offset <= 10; offset += 1) {
+    const candidate = currentNumber + offset;
+    if (allowedTails.includes(candidate % 10)) {
+      return candidate;
+    }
+  }
+
+  return currentNumber + 10;
+}
+
+function inferWorksheetStepPattern(numbers: number[]): WorksheetStepPattern {
+  if (numbers.length === 0) {
+    return '10';
+  }
+
+  const tails = numbers.map((number) => number % 10);
+  const lastTail = tails[tails.length - 1];
+
+  if (numbers.length === 1) {
+    if (lastTail === 5 || lastTail === 8) {
+      return '433';
+    }
+    if (lastTail === 6) {
+      return '55';
+    }
+    return '10';
+  }
+
+  const deltas = numbers.slice(1).map((number, index) => number - numbers[index]);
+  const tailDeltas = deltas.slice(-3);
+
+  if (tailDeltas.length === 3 && tailDeltas[0] === 4 && tailDeltas[1] === 3 && tailDeltas[2] === 3) {
+    return '433';
+  }
+
+  if (deltas.length >= 2 && deltas.slice(-2).every((delta) => delta === 5)) {
+    return '55';
+  }
+
+  if (deltas.every((delta) => delta === 10)) {
+    return '10';
+  }
+
+  if (tails.every((tail) => tail === 1)) {
+    return '10';
+  }
+
+  if (tails.every((tail) => tail === 1 || tail === 6)) {
+    return '55';
+  }
+
+  if (tails.every((tail) => tail === 1 || tail === 5 || tail === 8)) {
+    return '433';
+  }
+
+  return '10';
+}
+
+function getStepFromPattern(lastNumber: number, pattern: WorksheetStepPattern) {
+  const lastTail = lastNumber % 10;
+
+  if (pattern === '433') {
+    if (lastTail === 1) {
+      return 4;
+    }
+    if (lastTail === 5 || lastTail === 8) {
+      return 3;
+    }
+
+    return getNextNumberWithAllowedTails(lastNumber, [1, 5, 8]) - lastNumber;
+  }
+
+  if (pattern === '55') {
+    if (lastTail === 1 || lastTail === 6) {
+      return 5;
+    }
+
+    return getNextNumberWithAllowedTails(lastNumber, [1, 6]) - lastNumber;
+  }
+
+  if (lastTail === 1) {
+    return 10;
+  }
+
+  return getNextNumberWithAllowedTails(lastNumber, [1]) - lastNumber;
+}
+
+function getWorksheetStepFromHistory(codes: string[]) {
+  const numericCodes = getNumericWorksheetHistory(codes);
+  if (numericCodes.length === 0) {
+    return 10;
+  }
+
+  const pattern = inferWorksheetStepPattern(numericCodes);
+  return getStepFromPattern(numericCodes[numericCodes.length - 1], pattern);
+}
+
+function getHistoricalWorksheetStep(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const recentDates = Array.from(new Set(rows
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .map((row) => row.date)))
+    .sort()
+    .slice(-4);
+
+  const recentCodes = recentDates.flatMap((dateValue) => rows
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .slice()
+    .sort(compareWorksheetRows)
+    .map((row) => row.worksheet)
+    .filter((worksheet) => {
+      const parts = splitWorksheetCode(worksheet);
+      return parts !== null && parts.level === targetLevel && !isFixedWorksheetCodeLevel(parts.level);
+    }));
+
+  return getWorksheetStepFromHistory(recentCodes);
+}
+
+function getHistoricalWorksheetStepCycle(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const recentDates = Array.from(new Set(rows
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .map((row) => row.date)))
+    .sort()
+    .slice(-4);
+
+  const recentCodes = recentDates.flatMap((dateValue) => rows
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .slice()
+    .sort(compareWorksheetRows)
+    .map((row) => row.worksheet)
+    .filter((worksheet) => {
+      const parts = splitWorksheetCode(worksheet);
+      return parts !== null && parts.level === targetLevel && !isFixedWorksheetCodeLevel(parts.level);
+    }));
+
+  const numericCodes = getNumericWorksheetHistory(recentCodes);
+  if (numericCodes.length === 0) {
+    return [10];
+  }
+
+  const pattern = inferWorksheetStepPattern(numericCodes);
+  if (pattern === '433') {
+    return [4, 3, 3];
+  }
+
+  if (pattern === '55') {
+    return [5];
+  }
+
+  return [10];
+}
+
+function getHistoricalMainWorksheetDefault(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const recentDates = Array.from(new Set(rows
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .map((row) => row.date)))
+    .sort()
+    .slice(-4);
+
+  const recentCodes = recentDates.flatMap((dateValue) => rows
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .slice()
+    .sort(compareWorksheetRows)
+    .map((row) => row.worksheet)
+    .filter((worksheet) => {
+      const parts = splitWorksheetCode(worksheet);
+      return parts !== null && parts.level === targetLevel && !isFixedWorksheetCodeLevel(parts.level);
+    }));
+
+  if (recentCodes.length === 0) {
+    return null;
+  }
+
+  const lastCode = recentCodes[recentCodes.length - 1];
+  const lastParts = splitWorksheetCode(lastCode);
+  if (!lastParts) {
+    return null;
+  }
+
+  const step = getWorksheetStepFromHistory(recentCodes);
+  return createMainWorksheetEntry(lastParts.level, String(Number(lastParts.number) + step));
+}
+
+function getHistoricalWritingDefault(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const recentDates = Array.from(new Set(rows
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && row.isWriting)
+    .map((row) => row.date)))
+    .sort()
+    .slice(-4);
+
+  const recentCodes = recentDates.flatMap((dateValue) => rows
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && row.isWriting)
+    .slice()
+    .sort(compareWorksheetRows)
+    .map((row) => row.worksheet)
+    .filter((worksheet) => {
+      const parts = splitWorksheetCode(worksheet);
+      return parts !== null && parts.level === targetLevel;
+    }));
+
+  if (recentCodes.length === 0) {
+    return null;
+  }
+
+  const lastCode = recentCodes[recentCodes.length - 1];
+  const lastParts = splitWorksheetCode(lastCode);
+  if (!lastParts) {
+    return null;
+  }
+
+  const step = getWorksheetStepFromHistory(recentCodes);
+  return { level: lastParts.level, number: String(Number(lastParts.number) + step) };
+}
+
+// Định nghĩa các vùng worksheet được tính lần sử dụng riêng
+type WorksheetRange = {
+  level: string;
+  minNumber: number;
+  maxNumber: number;
+  subjectCode: SubjectCode;
+};
+
+const SPECIAL_WORKSHEET_RANGES: WorksheetRange[] = [
+  { level: '6A', minNumber: 1, maxNumber: 191, subjectCode: 'MATH' },
+  { level: '5A', minNumber: 1, maxNumber: 91, subjectCode: 'MATH' },
+  { level: '7A', minNumber: 1, maxNumber: 191, subjectCode: 'EFL' },
+  { level: '6A', minNumber: 1, maxNumber: 191, subjectCode: 'EFL' },
+  { level: '5A', minNumber: 1, maxNumber: 91, subjectCode: 'EFL' },
+];
+
+function getWorksheetRange(worksheetCode: string, subjectCode: SubjectCode): WorksheetRange | null {
+  const parts = splitWorksheetCode(worksheetCode);
+  if (!parts) {
+    return null;
+  }
+
+  const number = Number(parts.number);
+  const range = SPECIAL_WORKSHEET_RANGES.find(
+    (r) => r.subjectCode === subjectCode && r.level === parts.level && number >= r.minNumber && number <= r.maxNumber
+  );
+
+  return range ?? null;
+}
+
+function getRangeKey(range: WorksheetRange): string {
+  return `${range.subjectCode}-${range.level}`;
+}
+
+function getWorksheetRangeKey(worksheetCode: string, subjectCode: SubjectCode): string | null {
+  const range = getWorksheetRange(worksheetCode, subjectCode);
+  return range ? getRangeKey(range) : null;
+}
+
+function splitAssignmentPayload(rawPayload: string) {
+  const match = rawPayload.match(/^(.*?)(?:\s*::NOTE::\s*(.*))?$/);
+  if (!match) {
+    return {
+      worksheetCodeRaw: rawPayload.trim(),
+      noteRaw: '',
+    };
+  }
+
+  return {
+    worksheetCodeRaw: (match[1] ?? '').trim(),
+    noteRaw: (match[2] ?? '').trim(),
+  };
+}
+
+function normalizeWorksheetCodeFromPayload(rawPayload: string) {
+  const { worksheetCodeRaw } = splitAssignmentPayload(rawPayload);
+  const codeMatch = worksheetCodeRaw.match(/^(AT-[A-Z0-9]+|DT-[A-Z0-9]+|[A-Z0-9-]*[A-Z]\d+)$/i);
+  return codeMatch ? codeMatch[1].toUpperCase() : worksheetCodeRaw.toUpperCase();
+}
+
 function extractWorksheetCodeFromNote(note: string | null) {
   if (!note) {
     return '';
   }
 
   if (note.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-    return note
-      .slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length)
-      .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
-      .trim()
-      .toUpperCase();
+    return normalizeWorksheetCodeFromPayload(note.slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length));
   }
 
   if (note.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
-    return note
-      .slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length)
-      .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
-      .trim()
-      .toUpperCase();
+    return normalizeWorksheetCodeFromPayload(note.slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length));
   }
 
   return '';
@@ -218,6 +515,10 @@ function extractAssignmentNoteFromUsage(note: string | null) {
     return note.slice(WORKSHEET_DAILY_NOTE_PREFIX.length).trim();
   }
 
+  if (note.startsWith(WORKSHEET_CORRECTION_NOTE_PREFIX)) {
+    return note.slice(WORKSHEET_CORRECTION_NOTE_PREFIX.length).trim();
+  }
+
   let payload = '';
   if (note.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
     payload = note.slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length);
@@ -229,8 +530,12 @@ function extractAssignmentNoteFromUsage(note: string | null) {
     return '';
   }
 
-  const [, maybeNote] = payload.split(WORKSHEET_ASSIGN_NOTE_DELIMITER);
-  return maybeNote?.trim() ?? '';
+  return splitAssignmentPayload(payload).noteRaw;
+}
+
+function composeCorrectionUsageNote(assignmentNote: string) {
+  const trimmedNote = assignmentNote.trim();
+  return trimmedNote ? `${WORKSHEET_CORRECTION_NOTE_PREFIX}${trimmedNote}` : WORKSHEET_CORRECTION_NOTE_PREFIX;
 }
 
 function composeAssignmentUsageNote(prefix: string, worksheetCode: string, assignmentNote: string) {
@@ -246,6 +551,7 @@ function isWorksheetAssignmentUsage(usage: AcademicWorksheetUsage) {
   return usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)
     || usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)
     || usage.note?.startsWith(WORKSHEET_DAILY_NOTE_PREFIX)
+    || usage.note?.startsWith(WORKSHEET_CORRECTION_NOTE_PREFIX)
     || false;
 }
 
@@ -261,13 +567,13 @@ function splitWorksheetCode(value: string) {
     };
   }
 
-  const match = /^([A-Z]+)(\d+)$/.exec(value);
+  const match = /^([A-Z0-9-]*[A-Z])(\d+)$/i.exec(value.trim());
   if (!match) {
     return null;
   }
 
   return {
-    level: match[1],
+    level: match[1].toUpperCase(),
     number: match[2],
   };
 }
@@ -341,6 +647,7 @@ export default function StudentWorksheetLogPage() {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [includeMainWorksheet, setIncludeMainWorksheet] = useState(false);
   const [mainWorksheetEntries, setMainWorksheetEntries] = useState<MainWorksheetEntry[]>([createMainWorksheetEntry()]);
+  const [includeCorrection, setIncludeCorrection] = useState(false);
   const [includeWriting, setIncludeWriting] = useState(false);
   const [writingLevel, setWritingLevel] = useState('ZI');
   const [writingNumber, setWritingNumber] = useState('21');
@@ -417,6 +724,7 @@ export default function StudentWorksheetLogPage() {
           worksheet,
           subjectCode: batch.subjectCode,
           isWriting: isWritingUsage(usage),
+          isCorrection: isCorrectionUsage(usage),
           note: extractAssignmentNoteFromUsage(usage.note),
         } satisfies AssignmentRow;
       })
@@ -480,13 +788,35 @@ export default function StudentWorksheetLogPage() {
     return isWorksheetCodeValid(writingLevel, writingNumber) ? composeWorksheetCode(writingLevel, writingNumber) : '';
   }, [includeWriting, selectedDate, writingLevel, writingNumber]);
 
+  const selectedMainWorksheetDefault = useMemo(() => {
+    if (!selectedDate || includeMainWorksheet) {
+      return null;
+    }
+
+    const fallbackLevel = currentLevelInput && !isDtLevel(currentLevelInput)
+      ? currentLevelInput
+      : (getWorksheetAssignableLevels(subjectCode)[0] ?? levelBySubject[subjectCode][0]);
+
+    return getHistoricalMainWorksheetDefault(subjectRows, selectedDate, subjectCode, fallbackLevel);
+  }, [currentLevelInput, includeMainWorksheet, selectedDate, subjectCode, subjectRows]);
+
+  const selectedWritingWorksheetDefault = useMemo(() => {
+    if (!selectedDate || includeWriting) {
+      return null;
+    }
+
+    return getHistoricalWritingDefault(subjectRows, selectedDate, subjectCode, writingLevel);
+  }, [includeWriting, selectedDate, subjectCode, subjectRows, writingLevel]);
+
   const mainPastCount = useMemo(() => {
     if (!selectedDate || selectedMainWorksheets.length === 0) {
       return 0;
     }
 
-    const selectedSet = new Set(selectedMainWorksheets);
-    return subjectRows.filter((row) => !row.isWriting && selectedSet.has(row.worksheet) && row.date < selectedDate).length;
+    return selectedMainWorksheets.reduce((sum, worksheet) => {
+      const count = subjectRows.filter((row) => !row.isWriting && row.worksheet === worksheet && row.date < selectedDate).length;
+      return sum + count;
+    }, 0);
   }, [selectedDate, selectedMainWorksheets, subjectRows]);
 
   const mainWorksheetPastStats = useMemo(() => {
@@ -579,6 +909,50 @@ export default function StudentWorksheetLogPage() {
 
     if (includeWriting && !isWritingNumberAllowed(writingLevel, writingNumber)) {
       setPanelError('Mã kỹ năng viết phải theo quy tắc: ZI21..ZI91 hoặc ZII11..ZII91 (bước 10).');
+      return;
+    }
+
+    if (includeCorrection) {
+      setPanelError('');
+      setSaving(true);
+
+      try {
+        const batchId = await ensureAssignmentBatch(subjectCode);
+        const todayRows = (rowsByDate.get(selectedDate) ?? []);
+
+        const deleteResponses = await Promise.all(
+          todayRows.map((row) => fetch(`/api/hoc-thuat/worksheet-usages/${row.id}`, { method: 'DELETE' }))
+        );
+
+        if (deleteResponses.some((response) => !response.ok)) {
+          throw new Error('Không thể cập nhật worksheet trong ngày');
+        }
+
+        const response = await fetch('/api/hoc-thuat/worksheet-usages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            batchId,
+            studentId,
+            quantity: 1,
+            usedAt: selectedDate,
+            preparedBy: null,
+            note: composeCorrectionUsageNote(assignmentNote),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Không thể lưu sửa bài');
+        }
+
+        await refreshData();
+        setIsPanelOpen(false);
+      } catch (saveError) {
+        setPanelError(saveError instanceof Error ? saveError.message : 'Không thể lưu sửa bài.');
+      } finally {
+        setSaving(false);
+      }
+
       return;
     }
 
@@ -687,13 +1061,30 @@ export default function StudentWorksheetLogPage() {
     const mainRows = dayRows.filter((item) => !item.isWriting && item.worksheet);
     const mainRow = mainRows[0];
     const writingRow = dayRows.find((item) => item.isWriting);
+    const correctionRow = dayRows.find((item) => item.isCorrection);
 
     const mainParts = splitWorksheetCode(mainRow?.worksheet ?? '');
     const writingParts = splitWorksheetCode(writingRow?.worksheet ?? '');
     const assignableLevels = getWorksheetAssignableLevels(subjectCode);
     const fallbackAssignableLevel = assignableLevels[0] ?? levelBySubject[subjectCode][0];
-    const preferredLevel = mainParts?.level ?? currentLevelInput ?? fallbackAssignableLevel;
+    const preferredLevel = mainParts?.level ?? (isDtLevel(currentLevelInput) ? fallbackAssignableLevel : currentLevelInput) ?? fallbackAssignableLevel;
     const resolvedMainLevel = isDtLevel(preferredLevel) ? fallbackAssignableLevel : preferredLevel;
+    const historicalMainDefault = mainRow?.worksheet ? null : getHistoricalMainWorksheetDefault(allRows, dateValue, subjectCode, resolvedMainLevel);
+    const historicalWritingDefault = writingRow?.worksheet ? null : getHistoricalWritingDefault(allRows, dateValue, subjectCode, writingParts?.level ?? 'ZI');
+
+    if (correctionRow) {
+      setSelectedDate(dateValue);
+      setIncludeCorrection(true);
+      setIncludeMainWorksheet(false);
+      setIncludeWriting(false);
+      setMainWorksheetEntries([createMainWorksheetEntry(resolvedMainLevel, '1')]);
+      setWritingLevel(historicalWritingDefault?.level ?? 'ZI');
+      setWritingNumber(historicalWritingDefault?.number ?? '21');
+      setAssignmentNote(correctionRow.note);
+      setPanelError('');
+      setIsPanelOpen(true);
+      return;
+    }
 
     setSelectedDate(dateValue);
     const parsedMainEntries = mainRows
@@ -705,12 +1096,13 @@ export default function StudentWorksheetLogPage() {
       setIncludeMainWorksheet(true);
       setMainWorksheetEntries(parsedMainEntries);
     } else {
-      setIncludeMainWorksheet(Boolean(mainRow?.worksheet));
-      setMainWorksheetEntries([createMainWorksheetEntry(resolvedMainLevel, mainParts?.number ?? '1')]);
+      setIncludeMainWorksheet(Boolean(mainRow?.worksheet) || Boolean(historicalMainDefault));
+      setMainWorksheetEntries([historicalMainDefault ?? createMainWorksheetEntry(resolvedMainLevel, '1')]);
     }
+    setIncludeCorrection(false);
     setIncludeWriting(Boolean(mainRow?.worksheet) && Boolean(writingRow?.worksheet));
-    setWritingLevel(writingParts?.level ?? 'ZI');
-    setWritingNumber(writingParts?.number ?? '21');
+    setWritingLevel(historicalWritingDefault?.level ?? 'ZI');
+    setWritingNumber(historicalWritingDefault?.number ?? '21');
     setAssignmentNote(mainRow?.note || writingRow?.note || '');
     setPanelError('');
     setIsPanelOpen(true);
@@ -883,7 +1275,7 @@ export default function StudentWorksheetLogPage() {
                   const rows = rowsByDate.get(dateValue) ?? [];
                   const rowNote = rows.find((item) => item.note.trim())?.note ?? '';
                   const worksheetRows = rows
-                    .filter((row) => Boolean(row.worksheet))
+                    .filter((row) => Boolean(row.worksheet) || row.isCorrection)
                     .slice()
                     .sort(compareWorksheetRows);
                   return (
@@ -897,15 +1289,17 @@ export default function StudentWorksheetLogPage() {
                             {worksheetRows.map((row) => (
                               <Badge
                                 key={row.id}
-                                variant={row.isWriting ? 'warning' : 'secondary'}
-                                style={row.subjectCode === 'MATH'
-                                  ? { backgroundColor: '#2e8db714', color: '#2e8db7', borderColor: '#2e8db740' }
-                                  : { backgroundColor: '#f0890014', color: '#f08900', borderColor: '#f0890040' }}
+                                variant={row.isCorrection ? 'secondary' : (row.isWriting ? 'warning' : 'secondary')}
+                                style={row.isCorrection
+                                  ? { backgroundColor: '#16a34a14', color: '#15803d', borderColor: '#16a34a40' }
+                                  : (row.subjectCode === 'MATH'
+                                    ? { backgroundColor: '#2e8db714', color: '#2e8db7', borderColor: '#2e8db740' }
+                                    : { backgroundColor: '#f0890014', color: '#f08900', borderColor: '#f0890040' })}
                               >
-                                {row.isWriting ? `Viết ${row.worksheet}` : row.worksheet}
+                                {row.isCorrection ? 'CR' : (row.isWriting ? `Viết ${row.worksheet}` : row.worksheet)}
                               </Badge>
                             ))}
-                            {rows.every((row) => !row.worksheet) ? <span className="text-xs text-muted-foreground">Chỉ ghi chú</span> : null}
+                            {rows.every((row) => !row.worksheet && !row.isCorrection) ? <span className="text-xs text-muted-foreground">Chỉ ghi chú</span> : null}
                           </div>
                         )}
                       </TableCell>
@@ -1111,8 +1505,9 @@ export default function StudentWorksheetLogPage() {
             onClick={() => setIsPanelOpen(false)}
             aria-label="Đóng"
           />
-          <div className={`absolute inset-y-0 right-0 h-dvh w-full max-w-[460px] bg-white p-6 shadow-2xl transition-transform duration-300 ${isPanelOpen ? 'translate-x-0' : 'translate-x-full'}`} onClick={(event) => event.stopPropagation()}>
-          <div className="mb-4 flex items-start justify-between gap-3">
+          <div className={`absolute inset-y-0 right-0 h-dvh w-full max-w-[460px] bg-white shadow-2xl transition-transform duration-300 ${isPanelOpen ? 'translate-x-0' : 'translate-x-full'}`} onClick={(event) => event.stopPropagation()}>
+          <div className="flex h-full flex-col">
+          <div className="mb-4 flex items-start justify-between gap-3 border-b px-6 pb-4 pt-6">
             <div>
               <h2 className="text-lg font-semibold text-slate-950">Gán worksheet theo ngày</h2>
               <p className="text-sm text-muted-foreground">{selectedDate ? formatDate(selectedDate) : ''}</p>
@@ -1120,6 +1515,7 @@ export default function StudentWorksheetLogPage() {
             <Button type="button" variant="ghost" size="icon" onClick={() => setIsPanelOpen(false)}><X className="h-4 w-4" /></Button>
           </div>
 
+          <div className="flex-1 overflow-y-auto px-6 pb-6">
           <div className="space-y-4">
             {panelError ? <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{panelError}</div> : null}
             <div className="rounded-2xl border bg-slate-50 p-3 text-sm">
@@ -1133,20 +1529,43 @@ export default function StudentWorksheetLogPage() {
               <p className="mt-1 text-xs text-muted-foreground">Số từ hiện tại: {assignmentNoteWordCount}</p>
             </div>
 
+            <div className="space-y-2 rounded-2xl border bg-emerald-50 p-3 text-sm">
+              <label className="flex items-center gap-2 text-sm font-medium text-emerald-900">
+                <input
+                  type="checkbox"
+                  checked={includeCorrection}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncludeCorrection(checked);
+                    if (checked) {
+                      setIncludeMainWorksheet(false);
+                      setIncludeWriting(false);
+                    }
+                  }}
+                />
+                Sửa bài
+              </label>
+              <p className="text-xs text-emerald-800">Chỉ ghi nhận ngày sửa bài, không gán worksheet.</p>
+            </div>
+
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input
                   type="checkbox"
                   checked={includeMainWorksheet}
+                  disabled={includeCorrection}
                   onChange={(event) => {
                     const checked = event.target.checked;
                     setIncludeMainWorksheet(checked);
+                    if (checked) {
+                      setIncludeCorrection(false);
+                    }
                     if (!checked) {
                       setIncludeWriting(false);
                     }
                     if (checked && mainWorksheetEntries.length === 0) {
-                      const defaultLevel = getWorksheetAssignableLevels(subjectCode)[0] ?? levelBySubject[subjectCode][0];
-                      setMainWorksheetEntries([createMainWorksheetEntry(defaultLevel, '1')]);
+                      const defaultMain = selectedMainWorksheetDefault ?? createMainWorksheetEntry(getWorksheetAssignableLevels(subjectCode)[0] ?? levelBySubject[subjectCode][0], '1');
+                      setMainWorksheetEntries([defaultMain]);
                     }
                   }}
                 />
@@ -1155,7 +1574,7 @@ export default function StudentWorksheetLogPage() {
               {includeMainWorksheet ? (
                 <div className="space-y-2">
                   {mainWorksheetEntries.map((entry, index) => (
-                    <div key={entry.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <div key={entry.id} className={`grid ${isFixedWorksheetCodeLevel(entry.level) ? 'grid-cols-[1fr_auto]' : 'grid-cols-[1fr_1fr_auto]'} gap-2`}>
                       <Select
                         value={entry.level}
                         onValueChange={(value) => setMainWorksheetEntries((current) => current.map((item) => (item.id === entry.id ? { ...item, level: value } : item)))}
@@ -1165,18 +1584,19 @@ export default function StudentWorksheetLogPage() {
                           {getWorksheetAssignableLevels(subjectCode).map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={entry.number}
-                        disabled={isFixedWorksheetCodeLevel(entry.level)}
-                        onChange={(event) => setMainWorksheetEntries((current) => current.map((item) => (item.id === entry.id ? { ...item, number: event.target.value } : item)))}
-                        placeholder={isFixedWorksheetCodeLevel(entry.level) ? 'Level cố định không cần số' : 'Số worksheet'}
-                      />
+                      {!isFixedWorksheetCodeLevel(entry.level) ? (
+                        <Input
+                          type="number"
+                          min={1}
+                          value={entry.number}
+                          onChange={(event) => setMainWorksheetEntries((current) => current.map((item) => (item.id === entry.id ? { ...item, number: event.target.value } : item)))}
+                          placeholder="Số worksheet"
+                        />
+                      ) : null}
                       <Button
                         type="button"
                         variant="destructive"
-                        disabled={mainWorksheetEntries.length === 1}
+                          disabled={mainWorksheetEntries.length === 1}
                         onClick={() => setMainWorksheetEntries((current) => current.filter((item) => item.id !== entry.id))}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1188,8 +1608,12 @@ export default function StudentWorksheetLogPage() {
                     variant="outline"
                     onClick={() => setMainWorksheetEntries((current) => {
                       const fallbackLevel = getWorksheetAssignableLevels(subjectCode)[0] ?? levelBySubject[subjectCode][0];
-                      const defaultLevel = current[0]?.level ?? fallbackLevel;
-                      return [...current, createMainWorksheetEntry(defaultLevel, '1')];
+                      const defaultLevel = current[current.length - 1]?.level ?? current[0]?.level ?? fallbackLevel;
+                      const previousNumber = Number(current[current.length - 1]?.number ?? '0');
+                      const stepCycle = getHistoricalWorksheetStepCycle(subjectRows, selectedDate, subjectCode, defaultLevel);
+                      const step = stepCycle[current.length % stepCycle.length] ?? stepCycle[0] ?? 10;
+                      const nextNumber = Number.isFinite(previousNumber) && previousNumber > 0 ? String(previousNumber + step) : '1';
+                      return [...current, createMainWorksheetEntry(defaultLevel, nextNumber)];
                     })}
                   >
                     <PlusCircle className="mr-2 h-4 w-4" />
@@ -1214,7 +1638,19 @@ export default function StudentWorksheetLogPage() {
 
             <div className="space-y-2 rounded-2xl border bg-muted/20 p-4">
               <label className="flex items-center gap-2 text-sm font-medium">
-                <input type="checkbox" checked={includeWriting} disabled={!includeMainWorksheet} onChange={(event) => setIncludeWriting(event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={includeWriting}
+                  disabled={!includeMainWorksheet || includeCorrection}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncludeWriting(checked);
+                    if (checked && !includeWriting && selectedWritingWorksheetDefault) {
+                      setWritingLevel(selectedWritingWorksheetDefault.level);
+                      setWritingNumber(selectedWritingWorksheetDefault.number);
+                    }
+                  }}
+                />
                 Kỹ năng viết
               </label>
 
@@ -1240,20 +1676,22 @@ export default function StudentWorksheetLogPage() {
               <div className="rounded-2xl border bg-muted/20 p-4">
                 <p className="text-sm font-medium text-slate-900">Worksheet đã gán ngày này</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedDateRows.filter((row) => Boolean(row.worksheet)).slice().sort(compareWorksheetRows).map((row) => (
+                  {selectedDateRows.filter((row) => Boolean(row.worksheet) || row.isCorrection).slice().sort(compareWorksheetRows).map((row) => (
                     <Badge
                       key={row.id}
-                      style={row.subjectCode === 'MATH'
-                        ? { backgroundColor: '#2e8db714', color: '#2e8db7', borderColor: '#2e8db740' }
-                        : { backgroundColor: '#f0890014', color: '#f08900', borderColor: '#f0890040' }}
+                      style={row.isCorrection
+                        ? { backgroundColor: '#16a34a14', color: '#15803d', borderColor: '#16a34a40' }
+                        : (row.subjectCode === 'MATH'
+                          ? { backgroundColor: '#2e8db714', color: '#2e8db7', borderColor: '#2e8db740' }
+                          : { backgroundColor: '#f0890014', color: '#f08900', borderColor: '#f0890040' })}
                       variant="outline"
                     >
-                      {row.isWriting ? `Viết ${row.worksheet}` : row.worksheet}
+                      {row.isCorrection ? 'CR' : (row.isWriting ? `Viết ${row.worksheet}` : row.worksheet)}
                     </Badge>
                   ))}
-                  {selectedDateRows.every((row) => !row.worksheet) ? <span className="text-xs text-muted-foreground">Chỉ ghi chú</span> : null}
+                  {selectedDateRows.every((row) => !row.worksheet && !row.isCorrection) ? <span className="text-xs text-muted-foreground">Chỉ ghi chú</span> : null}
                 </div>
-                {selectedDateRows.every((row) => !row.worksheet) ? (
+                {selectedDateRows.every((row) => !row.worksheet && !row.isCorrection) ? (
                   <p className="mt-2 text-xs text-muted-foreground">Ngày này chỉ có ghi chú, không gán worksheet.</p>
                 ) : null}
               </div>
@@ -1262,6 +1700,8 @@ export default function StudentWorksheetLogPage() {
             <Button type="button" className="w-full" disabled={saving} onClick={() => void saveWorksheetForDay()}>
               {saving ? 'Đang lưu...' : 'Lưu worksheet ngày này'}
             </Button>
+          </div>
+          </div>
           </div>
         </div>
       </div>,

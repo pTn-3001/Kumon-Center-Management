@@ -126,6 +126,13 @@ type WorksheetLoanRecord = {
 
 type InventorySubject = SubjectCode | 'WRITING';
 
+type WorksheetRange = {
+  level: string;
+  minNumber: number;
+  maxNumber: number;
+  subjectCode: SubjectCode;
+};
+
 const levelBySubject: Record<SubjectCode, string[]> = {
   MATH: ['6A', '5A', '4A', '3A', '2A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'AT-4A', 'AT-3A', 'AT-2A', 'AT-A', 'AT-B', 'AT-C', 'AT-D', 'AT-E', 'AT-F', 'AT-G', 'AT-H', 'AT-I', 'AT-J', 'AT-K', 'AT-L', 'AT-M', 'AT-N', 'DT-K1', 'DT-K2', 'DT-P1', 'DT-P2', 'DT-P3', 'DT-P4', 'DT-P5', 'DT-P6', 'DT-M1', 'DT-M2', 'DT-M3', 'DT-H'],
   EFL: ['7A', '6A', '5A', '4A', '3A', '2A', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'AT-7A', 'AT-6A', 'AT-5A', 'AT-4A', 'AT-3A', 'AT-2A', 'AT-A', 'AT-B', 'AT-C', 'AT-D', 'AT-E', 'AT-F', 'AT-G', 'AT-H', 'AT-I', 'AT-J', 'AT-K', 'AT-L', 'AT-M', 'AT-N', 'DT-K', 'DT-P1', 'DT-P2', 'DT-M', 'DT-H'],
@@ -179,6 +186,14 @@ const WORKSHEET_RETURN_NOTE_PREFIX = '[WS_RETURN]';
 const WORKSHEET_STOCK_TRACKING_PREFIX = '[WS_STOCK_TRACKING]';
 const WORKSHEET_ASSIGN_NOTE_DELIMITER = '::NOTE::';
 
+const SPECIAL_WORKSHEET_RANGES: WorksheetRange[] = [
+  { level: '6A', minNumber: 1, maxNumber: 191, subjectCode: 'MATH' },
+  { level: '5A', minNumber: 1, maxNumber: 91, subjectCode: 'MATH' },
+  { level: '7A', minNumber: 1, maxNumber: 191, subjectCode: 'EFL' },
+  { level: '6A', minNumber: 1, maxNumber: 191, subjectCode: 'EFL' },
+  { level: '5A', minNumber: 1, maxNumber: 91, subjectCode: 'EFL' },
+];
+
 function isAtLevel(level: string) {
   return /^AT-[A-Z0-9]+$/i.test(level.trim());
 }
@@ -222,23 +237,34 @@ function extractWorksheetCodeFromNote(note: string | null) {
     return '';
   }
 
+  const splitAssignmentPayload = (rawPayload: string) => {
+    const match = rawPayload.match(/^(.*?)(?:\s*::NOTE::\s*(.*))?$/);
+    if (!match) {
+      return {
+        worksheetCodeRaw: rawPayload.trim(),
+      };
+    }
+
+    return {
+      worksheetCodeRaw: (match[1] ?? '').trim(),
+    };
+  };
+
+  const normalizeWorksheetCodeFromPayload = (rawPayload: string) => {
+    const { worksheetCodeRaw } = splitAssignmentPayload(rawPayload);
+    const codeMatch = worksheetCodeRaw.match(/^(AT-[A-Z0-9]+|DT-[A-Z0-9]+|[A-Z0-9-]*[A-Z]\d+)$/i);
+    return codeMatch ? codeMatch[1].toUpperCase() : worksheetCodeRaw.toUpperCase();
+  };
+
   if (note.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-    return note
-      .slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length)
-      .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
-      .trim()
-      .toUpperCase();
+    return normalizeWorksheetCodeFromPayload(note.slice(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX.length));
   }
 
   if (!note.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
     return '';
   }
 
-  return note
-    .slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length)
-    .split(WORKSHEET_ASSIGN_NOTE_DELIMITER)[0]
-    .trim()
-    .toUpperCase();
+  return normalizeWorksheetCodeFromPayload(note.slice(WORKSHEET_ASSIGNMENT_NOTE_PREFIX.length));
 }
 
 function normalizeWorksheetCode(value: string) {
@@ -255,7 +281,7 @@ function isWorksheetCodeValid(value: string) {
     return true;
   }
 
-  return /^[A-Z]+\d+$/.test(normalized);
+  return /^[A-Z0-9-]*[A-Z]\d+$/i.test(normalized);
 }
 
 function getWorksheetParts(value: string) {
@@ -267,7 +293,7 @@ function getWorksheetParts(value: string) {
     };
   }
 
-  const match = /^([A-Z]+)(\d+)$/.exec(normalized);
+  const match = /^([A-Z0-9-]*[A-Z])(\d+)$/i.exec(normalized);
   if (!match) {
     return null;
   }
@@ -276,6 +302,35 @@ function getWorksheetParts(value: string) {
     prefix: match[1],
     number: Number(match[2]),
   };
+}
+
+function getWorksheetRange(worksheetCode: string, subjectCode: SubjectCode): WorksheetRange | null {
+  const parts = getWorksheetParts(worksheetCode);
+  if (!parts || isFixedWorksheetCodeLevel(parts.prefix)) {
+    return null;
+  }
+
+  const range = SPECIAL_WORKSHEET_RANGES.find((item) => (
+    item.subjectCode === subjectCode
+    && item.level === parts.prefix
+    && parts.number >= item.minNumber
+    && parts.number <= item.maxNumber
+  ));
+
+  return range ?? null;
+}
+
+function getWorksheetRangeKey(worksheetCode: string, subjectCode: SubjectCode) {
+  const range = getWorksheetRange(worksheetCode, subjectCode);
+  return range ? `${range.subjectCode}-${range.level}` : null;
+}
+
+function getWorksheetCodesInRange(range: WorksheetRange) {
+  const codes: string[] = [];
+  for (let number = range.minNumber; number <= range.maxNumber; number += 10) {
+    codes.push(normalizeWorksheetCode(`${range.level}${number}`));
+  }
+  return codes;
 }
 
 function toDateInputValue(value: string | Date) {
@@ -495,6 +550,97 @@ function AcademicWarehousePageContent() {
     );
     const availableUsages = (data?.worksheetUsages ?? []).filter((usage) => !isWorksheetAssignmentUsage(usage));
 
+    const firstRangeAssignmentUsageByKey = new Map<string, { usageId: number; worksheetCode: string }>();
+    (data?.worksheetUsages ?? []).forEach((usage) => {
+      if (!usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+        return;
+      }
+
+      const batch = assignmentBatchById.get(usage.batchId);
+      if (!batch) {
+        return;
+      }
+
+      const worksheet = extractWorksheetCodeFromNote(usage.note);
+      if (!worksheet) {
+        return;
+      }
+
+      const rangeKey = getWorksheetRangeKey(worksheet, batch.subjectCode);
+      if (!rangeKey) {
+        return;
+      }
+
+      const current = firstRangeAssignmentUsageByKey.get(rangeKey);
+      const usageTime = new Date(usage.usedAt).getTime();
+      if (!current) {
+        firstRangeAssignmentUsageByKey.set(rangeKey, { usageId: usage.id, worksheetCode: worksheet });
+        return;
+      }
+
+      const currentUsage = (data?.worksheetUsages ?? []).find((item) => item.id === current.usageId);
+      const currentTime = currentUsage ? new Date(currentUsage.usedAt).getTime() : Number.POSITIVE_INFINITY;
+      const isEarlier = usageTime < currentTime || (usageTime === currentTime && usage.id < current.usageId);
+      if (isEarlier) {
+        firstRangeAssignmentUsageByKey.set(rangeKey, { usageId: usage.id, worksheetCode: worksheet });
+      }
+    });
+
+    const assignmentUsedBeforeByCode = new Map<string, number>();
+    const assignmentUsedInPeriodByCode = new Map<string, number>();
+
+    (data?.worksheetUsages ?? []).forEach((usage) => {
+      const usageDate = toDateInputValue(usage.usedAt);
+      const worksheet = extractWorksheetCodeFromNote(usage.note);
+      if (!worksheet) {
+        return;
+      }
+
+      let normalizedSubject: InventorySubject | null = null;
+      let shouldCount = false;
+
+      if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
+        normalizedSubject = 'WRITING';
+        shouldCount = true;
+      } else if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+        const batch = assignmentBatchById.get(usage.batchId);
+        if (!batch) {
+          return;
+        }
+
+        normalizedSubject = batch.subjectCode;
+        const rangeKey = getWorksheetRangeKey(worksheet, batch.subjectCode);
+        if (!rangeKey) {
+          shouldCount = true;
+        } else {
+          const firstUsage = firstRangeAssignmentUsageByKey.get(rangeKey);
+          shouldCount = firstUsage?.usageId === usage.id;
+        }
+      }
+
+      if (!normalizedSubject || normalizedSubject !== stockSubject || !shouldCount) {
+        return;
+      }
+
+      const accumulateToMap = (targetCodeKey: string) => {
+        if (usageDate < stockPeriod.startKey) {
+          assignmentUsedBeforeByCode.set(targetCodeKey, (assignmentUsedBeforeByCode.get(targetCodeKey) ?? 0) + usage.quantity);
+        } else if (usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey) {
+          assignmentUsedInPeriodByCode.set(targetCodeKey, (assignmentUsedInPeriodByCode.get(targetCodeKey) ?? 0) + usage.quantity);
+        }
+      };
+
+      if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+        const range = getWorksheetRange(worksheet, normalizedSubject as SubjectCode);
+        if (range) {
+          getWorksheetCodesInRange(range).forEach((codeKey) => accumulateToMap(codeKey));
+          return;
+        }
+      }
+
+      accumulateToMap(normalizeWorksheetCode(worksheet));
+    });
+
     const codeList = isFixedWorksheetCodeLevel(stockLevel)
       ? [stockLevel]
       : getWorksheetNumberOptions(stockLevel).map((numberValue) => `${stockLevel}${numberValue}`);
@@ -550,59 +696,9 @@ function AcademicWarehousePageContent() {
         .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
-      const assignmentUsedBefore = (data?.worksheetUsages ?? []).reduce((sum, usage) => {
-        const usageDate = toDateInputValue(usage.usedAt);
-        if (usageDate >= stockPeriod.startKey) {
-          return sum;
-        }
-
-        const worksheet = extractWorksheetCodeFromNote(usage.note);
-        if (!worksheet || normalizeWorksheetCode(worksheet) !== normalizeWorksheetCode(worksheetCode)) {
-          return sum;
-        }
-
-        if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-          return stockSubject === 'WRITING' ? sum + usage.quantity : sum;
-        }
-
-        if (!usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
-          return sum;
-        }
-
-        const batch = assignmentBatchById.get(usage.batchId);
-        if (!batch) {
-          return sum;
-        }
-
-        return batch.subjectCode === stockSubject ? sum + usage.quantity : sum;
-      }, 0);
-
-      const assignmentUsed = (data?.worksheetUsages ?? []).reduce((sum, usage) => {
-        const usageDate = toDateInputValue(usage.usedAt);
-        if (!(usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey)) {
-          return sum;
-        }
-
-        const worksheet = extractWorksheetCodeFromNote(usage.note);
-        if (!worksheet || normalizeWorksheetCode(worksheet) !== normalizeWorksheetCode(worksheetCode)) {
-          return sum;
-        }
-
-        if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-          return stockSubject === 'WRITING' ? sum + usage.quantity : sum;
-        }
-
-        if (!usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
-          return sum;
-        }
-
-        const batch = assignmentBatchById.get(usage.batchId);
-        if (!batch) {
-          return sum;
-        }
-
-        return batch.subjectCode === stockSubject ? sum + usage.quantity : sum;
-      }, 0);
+      const normalizedWorksheetCode = normalizeWorksheetCode(worksheetCode);
+      const assignmentUsedBefore = assignmentUsedBeforeByCode.get(normalizedWorksheetCode) ?? 0;
+      const assignmentUsed = assignmentUsedInPeriodByCode.get(normalizedWorksheetCode) ?? 0;
 
       const opening = openingImported - baseUsedBefore - assignmentUsedBefore - generatedBefore;
 
