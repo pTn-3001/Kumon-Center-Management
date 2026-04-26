@@ -345,6 +345,7 @@ function StudentsPageContent() {
   const [tuitionStudent, setTuitionStudent] = useState<ApiStudent | null>(null);
   const [selectedPaymentMonths, setSelectedPaymentMonths] = useState<string[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Tiền mặt');
+  const [paymentDate, setPaymentDate] = useState(TODAY_ISO);
   const [prefilledLeadId, setPrefilledLeadId] = useState<number | null>(null);
   const [portalReady, setPortalReady] = useState(false);
 
@@ -673,45 +674,56 @@ function StudentsPageContent() {
 
   const selectedFilterMonthKey = tuitionMonthFilter;
 
+  const parseTuitionFinanceItem = useCallback((item: ApiFinanceItem) => {
+    const note = item.note?.trim();
+    if (!note?.startsWith(TUITION_NOTE_PREFIX)) {
+      return null;
+    }
+
+    const studentIdMatch = /studentId=(\d+)/.exec(note);
+    if (!studentIdMatch) {
+      return null;
+    }
+
+    const monthMatch = /month=(\d{4}-\d{2})/.exec(note);
+    const month = monthMatch?.[1] ?? item.spentAt.slice(0, 7);
+    const methodMatch = /method=([^;]+)/.exec(note);
+
+    return {
+      studentId: Number(studentIdMatch[1]),
+      month,
+      method: methodMatch ? methodMatch[1] : 'Không rõ',
+    };
+  }, []);
+
   const paidMap = useMemo(() => {
     const map = new Set<string>();
     financeItems.forEach((item) => {
-      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
+      const parsed = parseTuitionFinanceItem(item);
+      if (!parsed) {
         return;
       }
 
-      const studentIdMatch = /studentId=(\d+)/.exec(item.note);
-      const monthMatch = /month=(\d{4}-\d{2})/.exec(item.note);
-      if (!studentIdMatch || !monthMatch) {
-        return;
-      }
-
-      map.add(`${studentIdMatch[1]}-${monthMatch[1]}`);
+      map.add(`${parsed.studentId}-${parsed.month}`);
     });
     return map;
-  }, [financeItems]);
+  }, [financeItems, parseTuitionFinanceItem]);
 
   const tuitionPaymentDetailsMap = useMemo(() => {
     const map = new Map<string, { paymentDate: string; paymentMethod: string }>();
     financeItems.forEach((item) => {
-      if (!item.note?.startsWith(TUITION_NOTE_PREFIX)) {
+      const parsed = parseTuitionFinanceItem(item);
+      if (!parsed) {
         return;
       }
 
-      const studentIdMatch = /studentId=(\d+)/.exec(item.note);
-      const monthMatch = /month=(\d{4}-\d{2})/.exec(item.note);
-      const methodMatch = /method=([^;]+)/.exec(item.note);
-      if (!studentIdMatch || !monthMatch) {
-        return;
-      }
-
-      map.set(`${studentIdMatch[1]}-${monthMatch[1]}`, {
+      map.set(`${parsed.studentId}-${parsed.month}`, {
         paymentDate: item.spentAt.slice(0, 10),
-        paymentMethod: methodMatch ? methodMatch[1] : 'Không rõ',
+        paymentMethod: parsed.method,
       });
     });
     return map;
-  }, [financeItems]);
+  }, [financeItems, parseTuitionFinanceItem]);
 
   const hasAdmissionFeeRecorded = useCallback((studentId: number) => (
     financeItems.some((item) =>
@@ -753,6 +765,29 @@ function StudentsPageContent() {
       })
       .sort((a, b) => Number(a.paid) - Number(b.paid));
   }, [officialStudents, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+
+  const tuitionTotal = useMemo(() => tuitionRows.reduce((total, row) => total + row.estimatedAmount, 0), [tuitionRows]);
+
+  const tuitionPaidTotal = useMemo(() => {
+    return tuitionRows
+      .filter((row) => row.paid)
+      .reduce((total, row) => total + row.estimatedAmount, 0);
+  }, [tuitionRows]);
+
+  const admissionFeeTotal = useMemo(() => {
+    return financeItems.reduce((total, item) => {
+      if (!item.note?.startsWith('[ADMISSION_FEE]')) {
+        return total;
+      }
+
+      const spentAtMonth = item.spentAt.slice(0, 7);
+      if (spentAtMonth !== selectedFilterMonthKey) {
+        return total;
+      }
+
+      return total + item.amount;
+    }, 0);
+  }, [financeItems, selectedFilterMonthKey]);
 
   const tuitionDialogAmount = useMemo(() => {
     if (!tuitionStudent) {
@@ -934,6 +969,7 @@ function StudentsPageContent() {
     setTuitionStudent(student);
     setSelectedPaymentMonths([tuitionMonthFilter]);
     setPaymentMethod('Tiền mặt');
+    setPaymentDate(TODAY_ISO);
     setTuitionDialogOpen(true);
   }
 
@@ -954,7 +990,7 @@ function StudentsPageContent() {
           body: JSON.stringify({
             type: 'Khác',
             amount: calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
-            spentAt: `${monthKey}-01`,
+            spentAt: paymentDate,
             note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
             proofImage: null,
             skipNotification: true,
@@ -1328,7 +1364,9 @@ function StudentsPageContent() {
           !admissionFeePromotion &&
           !hasAdmissionFeeRecorded(targetStudentId)
         ) {
-          const admissionFeeRevenueDate = defaultReportBDate ?? studentAdmissionDate;
+          const admissionFeeRevenueDate = defaultReportBDate
+            ? `${defaultReportBDate.slice(0, 7)}-01`
+            : studentAdmissionDate;
           const admissionFeeResponse = await fetch('/api/tai-chinh', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1918,6 +1956,20 @@ function StudentsPageContent() {
                       ))}
                     </TableBody>
                   </Table>
+                  <div className="mt-3 space-y-2 rounded-b-xl border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Tổng học phí ước tính</span>
+                      <span className="font-semibold text-slate-950">{formatCurrency(tuitionTotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Tổng học phí đã thu</span>
+                      <span className="font-semibold text-slate-950">{formatCurrency(tuitionPaidTotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">Tổng phí nhập học đã thu</span>
+                      <span className="font-semibold text-slate-950">{formatCurrency(admissionFeeTotal)}</span>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -2035,6 +2087,11 @@ function StudentsPageContent() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ngày thu</Label>
+              <Input type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
             </div>
 
             <div className="space-y-2">

@@ -176,12 +176,13 @@ function isWritingNumberAllowed(level: string, numberText: string) {
     return false;
   }
 
+  const allowedTails = [1, 5, 6, 8];
   if (level === 'ZI') {
-    return number >= 21 && number <= 91 && (number - 21) % 10 === 0;
+    return number >= 21 && number <= 91 && allowedTails.includes(number % 10);
   }
 
   if (level === 'ZII') {
-    return number >= 11 && number <= 91 && (number - 11) % 10 === 0;
+    return number >= 11 && number <= 91 && allowedTails.includes(number % 10);
   }
 
   return false;
@@ -908,7 +909,7 @@ export default function StudentWorksheetLogPage() {
     }
 
     if (includeWriting && !isWritingNumberAllowed(writingLevel, writingNumber)) {
-      setPanelError('Mã kỹ năng viết phải theo quy tắc: ZI21..ZI91 hoặc ZII11..ZII91 (bước 10).');
+      setPanelError('Mã kỹ năng viết phải theo quy tắc: ZI21..ZI91 hoặc ZII11..ZII91 và thuộc các mẫu 100%, 5:5, 4:3:3.');
       return;
     }
 
