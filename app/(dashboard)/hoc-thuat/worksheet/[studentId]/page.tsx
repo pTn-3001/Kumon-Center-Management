@@ -111,7 +111,8 @@ function isDtLevel(level: string) {
 }
 
 function isFixedWorksheetCodeLevel(level: string) {
-  return isAtLevel(level) || isDtLevel(level);
+  const normalizedLevel = level.trim().toUpperCase();
+  return isAtLevel(normalizedLevel) || isDtLevel(normalizedLevel);
 }
 
 function getAssessmentLevelOptions(subjectCode: SubjectCode, testType: 'AT' | 'DT') {
@@ -182,7 +183,7 @@ function isWritingNumberAllowed(level: string, numberText: string) {
   }
 
   if (level === 'ZII') {
-    return number >= 11 && number <= 91 && allowedTails.includes(number % 10);
+    return number >= 1 && number <= 91 && allowedTails.includes(number % 10);
   }
 
   return false;
@@ -561,9 +562,17 @@ function isWritingUsage(usage: AcademicWorksheetUsage) {
 }
 
 function splitWorksheetCode(value: string) {
+  const normalizedValue = value.trim().toUpperCase();
+  if (normalizedValue === 'ZII1') {
+    return {
+      level: normalizedValue,
+      number: '1',
+    };
+  }
+
   if (/^(AT|DT)-[A-Z0-9]+$/i.test(value)) {
     return {
-      level: value.toUpperCase(),
+      level: normalizedValue,
       number: '1',
     };
   }

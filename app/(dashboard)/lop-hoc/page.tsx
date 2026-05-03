@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BarChart, Bar, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CheckCircle2, Trash2 } from 'lucide-react';
+import { CheckCircle2, CircleCheckBig, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -687,11 +687,14 @@ function ClassPageContent() {
                             boxShadow: isToday ? `0 0 0 1px ${subjectColor}26` : undefined,
                           }}
                         >
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <div>
                               <p className="font-semibold text-slate-950">{classItem.name}</p>
                               <p className="text-xs text-muted-foreground">{enrollmentCount} học viên</p>
                             </div>
+                            {active ? (
+                              <CircleCheckBig className="h-6 w-6 text-green-600" />
+                            ) : null}
                           </div>
                         </button>
                       );

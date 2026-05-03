@@ -183,7 +183,7 @@ const WORKSHEET_WRITING_BATCH_NOTE_PREFIX = '[WS_WRITING_BATCH]';
 const WORKSHEET_EXTRA_NOTE_PREFIX = '[WS_EXTRA]';
 const WORKSHEET_LOAN_NOTE_PREFIX = '[WS_LOAN]';
 const WORKSHEET_RETURN_NOTE_PREFIX = '[WS_RETURN]';
-const WORKSHEET_STOCK_TRACKING_PREFIX = '[WS_STOCK_TRACKING]';
+const WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX = '[WS_OPENING_BALANCE_ADJUST]';
 const WORKSHEET_ASSIGN_NOTE_DELIMITER = '::NOTE::';
 
 const SPECIAL_WORKSHEET_RANGES: WorksheetRange[] = [
@@ -203,7 +203,8 @@ function isDtLevel(level: string) {
 }
 
 function isFixedWorksheetCodeLevel(level: string) {
-  return isAtLevel(level) || isDtLevel(level);
+  const normalizedLevel = level.trim().toUpperCase();
+  return isAtLevel(normalizedLevel) || isDtLevel(normalizedLevel);
 }
 
 function getAssessmentLevelOptions(subjectCode: SubjectCode, testType: 'AT' | 'DT') {
@@ -348,7 +349,7 @@ function getWorksheetNumberOptions(level: string) {
   }
 
   if (level === 'ZII') {
-    return [11, 21, 31, 41, 51, 61, 71, 81, 91];
+    return [1, 11, 21, 31, 41, 51, 61, 71, 81, 91];
   }
 
   const options: number[] = [];
@@ -516,7 +517,8 @@ function AcademicWarehousePageContent() {
     return worksheetInventory
       .filter((batch) => {
         const importedAt = new Date(batch.receivedAt);
-        return importedAt.getMonth() === now.getMonth() && importedAt.getFullYear() === now.getFullYear();
+        const isOpeningBalanceAdjust = batch.note?.includes(WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX);
+        return !isOpeningBalanceAdjust && importedAt.getMonth() === now.getMonth() && importedAt.getFullYear() === now.getFullYear();
       })
       .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
   }, [worksheetInventory]);
@@ -653,13 +655,18 @@ function AcademicWarehousePageContent() {
       ));
 
       const openingImported = matchedBatches
-        .filter((batch) => toDateInputValue(batch.receivedAt) < stockPeriod.startKey)
+        .filter((batch) => {
+          const isOpeningBalanceAdjust = batch.note?.includes(WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX);
+          const batchDate = toDateInputValue(batch.receivedAt);
+          return !isOpeningBalanceAdjust && batchDate < stockPeriod.startKey;
+        })
         .reduce((sum, batch) => sum + batch.quantity, 0);
 
       const importedInPeriod = matchedBatches
         .filter((batch) => {
+          const isOpeningBalanceAdjust = batch.note?.includes(WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX);
           const batchDate = toDateInputValue(batch.receivedAt);
-          return batchDate >= stockPeriod.startKey && batchDate < stockPeriod.nextStartKey;
+          return !isOpeningBalanceAdjust && batchDate >= stockPeriod.startKey && batchDate < stockPeriod.nextStartKey;
         })
         .reduce((sum, batch) => sum + batch.quantity, 0);
 
@@ -680,6 +687,11 @@ function AcademicWarehousePageContent() {
         return usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey;
       });
 
+      const isAdjustmentUsage = (usage: AcademicWorksheetUsage) => (
+        usage.note?.startsWith('[WS_OPENING_ADJUST]')
+        || usage.note?.startsWith('[WS_USED_ADJUST]')
+      );
+
       const generatedBefore = usagesBeforePeriod
         .filter((usage: AcademicWorksheetUsage) => isGeneratedUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
@@ -689,20 +701,34 @@ function AcademicWarehousePageContent() {
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
       const baseUsedBefore = usagesBeforePeriod
-        .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage))
+        .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage) && !isAdjustmentUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
       const baseUsed = usagesInPeriod
-        .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage))
+        .filter((usage: AcademicWorksheetUsage) => !isGeneratedUsage(usage) && !isAdjustmentUsage(usage))
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
       const normalizedWorksheetCode = normalizeWorksheetCode(worksheetCode);
       const assignmentUsedBefore = assignmentUsedBeforeByCode.get(normalizedWorksheetCode) ?? 0;
       const assignmentUsed = assignmentUsedInPeriodByCode.get(normalizedWorksheetCode) ?? 0;
 
-      const opening = openingImported - baseUsedBefore - assignmentUsedBefore - generatedBefore;
+      // Calculate adjustments (opening & used)
+      const openingAdjustBefore = usagesBeforePeriod
+        .filter((usage: AcademicWorksheetUsage) => usage.note?.startsWith('[WS_OPENING_ADJUST]'))
+        .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
-      const used = baseUsed + assignmentUsed;
+      const openingAdjustInPeriod = usagesInPeriod
+        .filter((usage: AcademicWorksheetUsage) => usage.note?.startsWith('[WS_OPENING_ADJUST]'))
+        .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
+
+      const usedAdjustInPeriod = usagesInPeriod
+        .filter((usage: AcademicWorksheetUsage) => usage.note?.startsWith('[WS_USED_ADJUST]'))
+        .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
+
+      // Opening includes adjustments from both before and during this period
+      const opening = openingImported - baseUsedBefore - assignmentUsedBefore - generatedBefore + openingAdjustBefore + openingAdjustInPeriod;
+
+      const used = baseUsed + assignmentUsed + usedAdjustInPeriod;
       const generated = generatedUsageInPeriod;
       const closing = opening + importedInPeriod - used - generated;
 
@@ -1093,7 +1119,7 @@ function AcademicWarehousePageContent() {
     const subjectCode = stockSubject === 'WRITING' ? 'MATH' : stockSubject;
     const noteParts = [
       stockSubject === 'WRITING' ? WORKSHEET_WRITING_BATCH_NOTE_PREFIX : '',
-      WORKSHEET_STOCK_TRACKING_PREFIX,
+      WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX,
     ].filter(Boolean);
 
     const createResponse = await fetch('/api/hoc-thuat/worksheet-batches', {
@@ -1104,7 +1130,7 @@ function AcademicWarehousePageContent() {
         level: stockLevel,
         codeRange: row.worksheetCode,
         quantity: 0,
-        receivedAt: new Date().toISOString().slice(0, 10),
+        receivedAt: getStockReceivedDate(),
         note: noteParts.join(' '),
       }),
     });
@@ -1117,7 +1143,7 @@ function AcademicWarehousePageContent() {
     return created.id;
   }
 
-  async function createUsage(batchId: number, quantity: number, noteValue: string) {
+  async function createUsage(batchId: number, quantity: number, noteValue: string, usedAt?: string) {
     const response = await fetch('/api/hoc-thuat/worksheet-usages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1125,7 +1151,7 @@ function AcademicWarehousePageContent() {
         batchId,
         studentId: null,
         quantity,
-        usedAt: new Date().toISOString().slice(0, 10),
+        usedAt: usedAt ?? new Date().toISOString().slice(0, 10),
         preparedBy: null,
         note: noteValue,
       }),
@@ -1134,6 +1160,32 @@ function AcademicWarehousePageContent() {
     if (!response.ok) {
       throw new Error('Không thể cập nhật tồn kho worksheet');
     }
+  }
+
+  function calculateClosing(opening: number, generated: number, used: number): number {
+    return opening + generated - used;
+  }
+
+  function getStockReceivedDate(): string {
+    const year = Number(stockYearFilter);
+    const month = Number(stockMonthFilter);
+    const startDateOfMonth = new Date(year, month - 1, 1);
+    return toDateInputValue(startDateOfMonth);
+  }
+
+  function updateStockFormField(field: 'opening' | 'used' | 'generated', value: string) {
+    const numValue = Number(value) || 0;
+    const newForm = { ...stockEditForm, [field]: value };
+    
+    // Tính lại tồn cuối dựa trên công thức
+    const opening = field === 'opening' ? numValue : (Number(stockEditForm.opening) || 0);
+    const generated = field === 'generated' ? numValue : (Number(stockEditForm.generated) || 0);
+    const used = field === 'used' ? numValue : (Number(stockEditForm.used) || 0);
+    
+    const newClosing = calculateClosing(opening, generated, used);
+    newForm.closing = String(newClosing);
+    
+    setStockEditForm(newForm);
   }
 
   async function submitStockEdit() {
@@ -1149,38 +1201,20 @@ function AcademicWarehousePageContent() {
       const batchId = await ensureBatchForStockAction(selectedStockRow);
 
       const openingDelta = targetOpening - selectedStockRow.opening;
-      if (openingDelta > 0) {
-        const response = await fetch('/api/hoc-thuat/worksheet-batches', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subjectCode: stockSubject === 'WRITING' ? 'MATH' : stockSubject,
-            level: stockLevel,
-            codeRange: selectedStockRow.worksheetCode,
-            quantity: openingDelta,
-            receivedAt: new Date().toISOString().slice(0, 10),
-            note: WORKSHEET_STOCK_TRACKING_PREFIX,
-          }),
-        });
-        if (!response.ok) throw new Error('Không thể tăng tồn đầu');
-      } else if (openingDelta < 0) {
-        await createUsage(batchId, Math.abs(openingDelta), '[WS_OPENING_REDUCE] giảm tồn đầu');
-      }
-
-      const usedDelta = targetUsed - selectedStockRow.used;
-      if (usedDelta !== 0) {
-        await createUsage(batchId, usedDelta, '[WS_USED_ADJUST] điều chỉnh sử dụng');
+      if (openingDelta !== 0) {
+        // Use usage to track opening balance adjustment (not batch)
+        // Positive delta = increase opening, negative = decrease
+        await createUsage(batchId, openingDelta, '[WS_OPENING_ADJUST] điều chỉnh tồn đầu', getStockReceivedDate());
       }
 
       const generatedDelta = targetGenerated - selectedStockRow.generated;
       if (generatedDelta !== 0) {
-        await createUsage(batchId, generatedDelta, `${WORKSHEET_EXTRA_NOTE_PREFIX} phát sinh ngoài sử dụng`);
+        await createUsage(batchId, generatedDelta, `${WORKSHEET_EXTRA_NOTE_PREFIX} phát sinh`, getStockReceivedDate());
       }
 
-      const currentClosing = selectedStockRow.closing;
-      const closingDelta = currentClosing - targetClosing;
-      if (closingDelta !== 0) {
-        await createUsage(batchId, closingDelta, '[WS_CLOSING_ADJUST] điều chỉnh tồn cuối');
+      const usedDelta = targetUsed - selectedStockRow.used;
+      if (usedDelta !== 0) {
+        await createUsage(batchId, usedDelta, '[WS_USED_ADJUST] điều chỉnh sử dụng', getStockReceivedDate());
       }
 
       await refreshData();
@@ -1639,7 +1673,7 @@ function AcademicWarehousePageContent() {
                               setInventorySubject(nextSubject);
                               if (nextSubject === 'WRITING') {
                                 setInventoryWorksheetLevel('ZI');
-                                setInventoryWorksheetNumber('21');
+                                setInventoryWorksheetNumber('1');
                               } else {
                                 setInventoryWorksheetLevel('A');
                                 setInventoryWorksheetNumber('1');
@@ -1849,21 +1883,22 @@ function AcademicWarehousePageContent() {
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
                   <Label>Tồn đầu</Label>
-                  <Input type="number" value={stockEditForm.opening} onChange={(event) => setStockEditForm((current) => ({ ...current, opening: event.target.value }))} />
+                  <Input type="number" value={stockEditForm.opening} onChange={(event) => updateStockFormField('opening', event.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label>Sử dụng</Label>
-                  <Input type="number" value={stockEditForm.used} onChange={(event) => setStockEditForm((current) => ({ ...current, used: event.target.value }))} />
+                  <Input type="number" value={stockEditForm.used} onChange={(event) => updateStockFormField('used', event.target.value)} />
                 </div>
                 <div className="space-y-1">
                   <Label>Phát sinh</Label>
-                  <Input type="number" value={stockEditForm.generated} onChange={(event) => setStockEditForm((current) => ({ ...current, generated: event.target.value }))} />
+                  <Input type="number" value={stockEditForm.generated} onChange={(event) => updateStockFormField('generated', event.target.value)} />
                 </div>
                 <div className="space-y-1">
-                  <Label>Tồn cuối</Label>
-                  <Input type="number" value={stockEditForm.closing} onChange={(event) => setStockEditForm((current) => ({ ...current, closing: event.target.value }))} />
+                  <Label>Tồn cuối (tự động tính)</Label>
+                  <Input type="number" value={stockEditForm.closing} disabled className="bg-muted" />
                 </div>
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">Công thức: Tồn đầu + Phát sinh - Sử dụng = Tồn cuối</p>
               <Button type="button" className="mt-3" onClick={() => void submitStockEdit()} disabled={savingStockAction}>
                 <Save className="mr-2 h-4 w-4" />
                 Lưu chỉnh sửa

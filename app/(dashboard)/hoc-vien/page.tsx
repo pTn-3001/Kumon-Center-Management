@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { addYears, differenceInCalendarDays, parseISO, startOfDay } from 'date-fns';
 import { useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign, Save, FolderPlus, GraduationCap } from 'lucide-react';
+import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign, Save, FolderPlus, GraduationCap, History } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -335,6 +335,13 @@ function StudentsPageContent() {
   const [addSubjectReportBDate, setAddSubjectReportBDate] = useState('');
   const [addSubjectRegistrationType, setAddSubjectRegistrationType] = useState<AdmissionRegistrationType>('Chinh thuc');
   const [savingAddSubject, setSavingAddSubject] = useState(false);
+  const [newAdmissionOpen, setNewAdmissionOpen] = useState(false);
+  const [newAdmissionStudent, setNewAdmissionStudent] = useState<ApiStudent | null>(null);
+  const [newAdmissionSubject, setNewAdmissionSubject] = useState<SubjectCode>('MATH');
+  const [newAdmissionStartDate, setNewAdmissionStartDate] = useState(TODAY_ISO);
+  const [newAdmissionReportBDate, setNewAdmissionReportBDate] = useState('');
+  const [newAdmissionFeePaid, setNewAdmissionFeePaid] = useState(false);
+  const [savingNewAdmission, setSavingNewAdmission] = useState(false);
   const [officialAdmissionOpen, setOfficialAdmissionOpen] = useState(false);
   const [officialAdmissionStudent, setOfficialAdmissionStudent] = useState<ApiStudent | null>(null);
   const [officialAdmissionDate, setOfficialAdmissionDate] = useState(TODAY_ISO);
@@ -601,6 +608,26 @@ function StudentsPageContent() {
   const handleReenrollFromPanel = (student: ApiStudent) => {
     closeStudentPanel();
     openReenrollDialog(student);
+  };
+
+  const handleNewAdmissionFromPanel = (student: ApiStudent) => {
+    closeStudentPanel();
+
+    const candidateSubjects = SUBJECT_OPTIONS.filter((subject) =>
+      !student.enrollments.some((enrollment) => enrollment.subjectCode === subject)
+    );
+
+    if (candidateSubjects.length === 0) {
+      setError('Học viên đã từng học đủ các môn tại trung tâm. Vui lòng dùng Nhập học lại.');
+      return;
+    }
+
+    setNewAdmissionStudent(student);
+    setNewAdmissionSubject(candidateSubjects[0]);
+    setNewAdmissionStartDate(TODAY_ISO);
+    setNewAdmissionReportBDate('');
+    setNewAdmissionFeePaid(false);
+    setNewAdmissionOpen(true);
   };
 
   const handleRegisterOfficialFromPanel = (student: ApiStudent) => {
@@ -1116,6 +1143,8 @@ function StudentsPageContent() {
     setAddSubjectOpen(true);
   }
 
+
+
   async function submitAddSubject() {
     if (!addSubjectStudent) return;
 
@@ -1168,6 +1197,74 @@ function StudentsPageContent() {
       setError(e instanceof Error ? e.message : 'Có lỗi khi thêm môn học');
     } finally {
       setSavingAddSubject(false);
+    }
+  }
+
+  async function submitNewAdmission() {
+    if (!newAdmissionStudent) return;
+
+    try {
+      setSavingNewAdmission(true);
+
+      const candidateSubjects = SUBJECT_OPTIONS.filter((subject) =>
+        !newAdmissionStudent.enrollments.some((enrollment) => enrollment.subjectCode === subject)
+      );
+      if (!candidateSubjects.includes(newAdmissionSubject)) {
+        throw new Error('Môn này đã từng học tại trung tâm, vui lòng dùng Nhập học lại');
+      }
+
+      const createResponse = await fetch('/api/enrollments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId: newAdmissionStudent.id,
+          classGroupId: null,
+          subjectCode: newAdmissionSubject,
+          registrationType: 'Chính thức',
+          enrollmentType: '2 buổi/tuần',
+          studyDays: 'T2',
+          classShift: 'Ca 1',
+          startDate: newAdmissionStartDate,
+          reportBDate: newAdmissionReportBDate || null,
+          endDate: null,
+        }),
+      });
+
+      if (!createResponse.ok) {
+        throw new Error('Không thể lưu nhập học mới');
+      }
+
+      if (newAdmissionFeePaid) {
+        const admissionFeeRevenueDate = newAdmissionReportBDate
+          ? `${newAdmissionReportBDate.slice(0, 7)}-01`
+          : newAdmissionStartDate;
+
+        const feeResponse = await fetch('/api/tai-chinh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'Khác',
+            amount: 300000,
+            spentAt: admissionFeeRevenueDate,
+            note: `[ADMISSION_FEE] studentId=${newAdmissionStudent.id};source=new-subject;subject=${newAdmissionSubject}`,
+            proofImage: null,
+          }),
+        });
+
+        if (!feeResponse.ok) {
+          throw new Error('Không thể ghi nhận phí nhập học');
+        }
+      }
+
+      await updateStudentStatus(newAdmissionStudent.id, STATUS_OFFICIAL);
+      setNewAdmissionOpen(false);
+      setNewAdmissionStudent(null);
+      setNewAdmissionFeePaid(false);
+      await refreshStudents();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi nhập học mới');
+    } finally {
+      setSavingNewAdmission(false);
     }
   }
 
@@ -2023,6 +2120,8 @@ function StudentsPageContent() {
                 onAssign={handleAssignFromPanel}
                 extraActionLabel="Nhập học lại"
                 onExtraAction={handleReenrollFromPanel}
+                secondaryActionLabel="Nhập học mới"
+                onSecondaryAction={handleNewAdmissionFromPanel}
               />
             </aside>
           </>,
@@ -2416,6 +2515,59 @@ function StudentsPageContent() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={newAdmissionOpen} onOpenChange={setNewAdmissionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nhập học mới</DialogTitle>
+            <DialogDescription>{newAdmissionStudent ? `Học viên: ${newAdmissionStudent.fullName}` : ''}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Môn nhập học mới</Label>
+              <Select value={newAdmissionSubject} onValueChange={(value) => setNewAdmissionSubject(value as SubjectCode)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {SUBJECT_OPTIONS.filter((subject) => !newAdmissionStudent?.enrollments.some((enrollment) => enrollment.subjectCode === subject)).map((subject) => (
+                    <SelectItem key={subject} value={subject}>{subject === 'MATH' ? 'Toán' : 'Tiếng Anh'}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ngày nhập học</Label>
+              <Input type="date" value={newAdmissionStartDate} onChange={(e) => setNewAdmissionStartDate(e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Ngày Report B</Label>
+              <Input type="date" value={newAdmissionReportBDate} onChange={(e) => setNewAdmissionReportBDate(e.target.value)} />
+            </div>
+
+            <div className="space-y-2 rounded-xl border p-3">
+              <Label>Phí nhập học</Label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={newAdmissionFeePaid}
+                  onChange={(event) => setNewAdmissionFeePaid(event.target.checked)}
+                />
+                <span>Đã đóng phí nhập học 300.000đ</span>
+              </label>
+              <p className="text-xs text-muted-foreground">Bỏ chọn nếu không thu phí nhập học cho lần này.</p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewAdmissionOpen(false)}>Hủy</Button>
+            <Button onClick={() => void submitNewAdmission()} disabled={savingNewAdmission}>
+              {savingNewAdmission ? 'Đang lưu...' : 'Xác nhận nhập học mới'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={officialAdmissionOpen} onOpenChange={setOfficialAdmissionOpen}>
         <DialogContent>
           <DialogHeader>
@@ -2512,6 +2664,8 @@ type StudentDetailPanelProps = {
   getTrialDaysLeft?: (student: ApiStudent) => number;
   extraActionLabel?: string;
   onExtraAction?: (student: ApiStudent) => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: (student: ApiStudent) => void;
   onRegisterOfficial?: (student: ApiStudent) => void;
 };
 
@@ -2528,6 +2682,8 @@ function StudentDetailPanel({
   getTrialDaysLeft,
   extraActionLabel,
   onExtraAction,
+  secondaryActionLabel,
+  onSecondaryAction,
   onRegisterOfficial,
 }: StudentDetailPanelProps) {
   if (!student) {
@@ -2569,12 +2725,21 @@ function StudentDetailPanel({
           ) : null}
           {extraActionLabel && onExtraAction ? (
             <Button
-              className={onAddSubject ? '' : 'col-span-2'}
+              className={onAddSubject || secondaryActionLabel ? '' : 'col-span-2'}
               variant={extraActionLabel === 'Thôi học' ? 'destructive' : 'secondary'}
               onClick={() => onExtraAction(student)}
             >
-              {extraActionLabel === 'Thôi học' ? <ShieldX className="mr-2 h-4 w-4" /> : null}
+              {extraActionLabel === 'Thôi học' ? (
+                <ShieldX className="mr-2 h-4 w-4" />
+              ) : (
+                <History className="mr-2 h-4 w-4" />
+              )}
               {extraActionLabel}
+            </Button>
+          ) : null}
+          {secondaryActionLabel && onSecondaryAction ? (
+            <Button variant="outline" onClick={() => onSecondaryAction(student)}>
+              <PlusCircle className="mr-2 h-4 w-4" />{secondaryActionLabel}
             </Button>
           ) : null}
           {showOfficialRegisterButton && onRegisterOfficial ? (
