@@ -115,6 +115,11 @@ type StockRow = {
   matchedBatchIds: number[];
 };
 
+type StockPeriod = {
+  month: string;
+  year: string;
+};
+
 type WorksheetLoanRecord = {
   usageId: number;
   quantity: number;
@@ -402,6 +407,7 @@ function AcademicWarehousePageContent() {
   const [stockMonthFilter, setStockMonthFilter] = useState(String(new Date().getMonth() + 1));
   const [stockYearFilter, setStockYearFilter] = useState(String(new Date().getFullYear()));
   const [selectedStockRow, setSelectedStockRow] = useState<StockRow | null>(null);
+  const [selectedStockPeriod, setSelectedStockPeriod] = useState<StockPeriod | null>(null);
   const [stockDetailOpen, setStockDetailOpen] = useState(false);
   const [stockEditForm, setStockEditForm] = useState({ opening: '0', used: '0', generated: '0', closing: '0' });
   const [loanForm, setLoanForm] = useState({
@@ -1095,6 +1101,7 @@ function AcademicWarehousePageContent() {
 
   function openStockDetail(row: StockRow) {
     setSelectedStockRow(row);
+    setSelectedStockPeriod({ month: stockMonthFilter, year: stockYearFilter });
     setStockEditForm({
       opening: String(row.opening),
       used: String(row.used),
@@ -1163,12 +1170,12 @@ function AcademicWarehousePageContent() {
   }
 
   function calculateClosing(opening: number, generated: number, used: number): number {
-    return opening + generated - used;
+    return opening - generated - used;
   }
 
-  function getStockReceivedDate(): string {
-    const year = Number(stockYearFilter);
-    const month = Number(stockMonthFilter);
+  function getStockReceivedDate(period: StockPeriod | null = selectedStockPeriod): string {
+    const year = Number(period?.year ?? stockYearFilter);
+    const month = Number(period?.month ?? stockMonthFilter);
     const startDateOfMonth = new Date(year, month - 1, 1);
     return toDateInputValue(startDateOfMonth);
   }
@@ -1199,22 +1206,23 @@ function AcademicWarehousePageContent() {
       const targetClosing = Number(stockEditForm.closing) || 0;
 
       const batchId = await ensureBatchForStockAction(selectedStockRow);
+      const stockReceivedDate = getStockReceivedDate();
 
       const openingDelta = targetOpening - selectedStockRow.opening;
       if (openingDelta !== 0) {
         // Use usage to track opening balance adjustment (not batch)
         // Positive delta = increase opening, negative = decrease
-        await createUsage(batchId, openingDelta, '[WS_OPENING_ADJUST] điều chỉnh tồn đầu', getStockReceivedDate());
+        await createUsage(batchId, openingDelta, '[WS_OPENING_ADJUST] điều chỉnh tồn đầu', stockReceivedDate);
       }
 
       const generatedDelta = targetGenerated - selectedStockRow.generated;
       if (generatedDelta !== 0) {
-        await createUsage(batchId, generatedDelta, `${WORKSHEET_EXTRA_NOTE_PREFIX} phát sinh`, getStockReceivedDate());
+        await createUsage(batchId, generatedDelta, `${WORKSHEET_EXTRA_NOTE_PREFIX} phát sinh`, stockReceivedDate);
       }
 
       const usedDelta = targetUsed - selectedStockRow.used;
       if (usedDelta !== 0) {
-        await createUsage(batchId, usedDelta, '[WS_USED_ADJUST] điều chỉnh sử dụng', getStockReceivedDate());
+        await createUsage(batchId, usedDelta, '[WS_USED_ADJUST] điều chỉnh sử dụng', stockReceivedDate);
       }
 
       await refreshData();
@@ -1898,7 +1906,7 @@ function AcademicWarehousePageContent() {
                   <Input type="number" value={stockEditForm.closing} disabled className="bg-muted" />
                 </div>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">Công thức: Tồn đầu + Phát sinh - Sử dụng = Tồn cuối</p>
+              <p className="mt-2 text-xs text-muted-foreground">Công thức: Tồn đầu - Phát sinh - Sử dụng = Tồn cuối</p>
               <Button type="button" className="mt-3" onClick={() => void submitStockEdit()} disabled={savingStockAction}>
                 <Save className="mr-2 h-4 w-4" />
                 Lưu chỉnh sửa
