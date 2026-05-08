@@ -16,11 +16,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AppointmentDialog } from '@/components/consulting/appointment-dialog';
 import { formatDateTime } from '@/lib/utils';
-import { AppointmentStatus, Lead, LeadSource, LeadStatus } from '@/types';
+import { AppointmentStatus, Lead, LeadSource, LeadStatus, SubjectCode } from '@/types';
+import { MATH_LEVELS, EFL_LEVELS, getSubjectLabel } from '@/lib/kumon';
 
 const leadStatusOrder: LeadStatus[] = ['Mới', 'Đang liên hệ', 'Đã đặt hẹn', 'Đã đăng ký', 'Có thể liên hệ lại', 'Không tiềm năng'];
 const leadSourceOrder: LeadSource[] = ['Facebook', 'Website', 'Điện thoại', 'Giới thiệu'];
 const appointmentStatusOrder: AppointmentStatus[] = ['Chờ đến', 'Hoàn thành', 'Hẹn lại', 'Không đến'];
+
+const DT_LEVELS_MATH: string[] = ['DT-K1', 'DT-K2', 'DT-P1', 'DT-P2', 'DT-P3', 'DT-P4', 'DT-P5', 'DT-P6', 'DT-M1', 'DT-M2', 'DT-M3', 'DT-H'];
+const DT_LEVELS_EFL: string[] = ['DT-K', 'DT-P1', 'DT-P2', 'DT-M', 'DT-H'];
 
 type AppointmentItem = {
   id: number;
@@ -35,6 +39,11 @@ const filterSchema = z.object({
   status: z.string().default('all'),
   source: z.string().default('all'),
 });
+
+function stripWorksheetSelectionMarker(note: string | null | undefined): string {
+  if (!note) return '';
+  return note.replace(/\[\|WS_SEL\|[^\]]*\]/, '').trim();
+}
 
 function toDateOnly(value: string) {
   const date = new Date(value);
@@ -98,6 +107,8 @@ export default function ConsultingPage() {
     status: 'Chờ đến' as AppointmentStatus,
     note: '',
   });
+  const [appointmentEditSubjects, setAppointmentEditSubjects] = useState<SubjectCode[]>([]);
+  const [appointmentEditWorksheets, setAppointmentEditWorksheets] = useState<Record<SubjectCode, string>>({});
   const [newLead, setNewLead] = useState({
     fullName: '',
     parentPhone: '',
@@ -254,12 +265,36 @@ export default function ConsultingPage() {
   };
 
   const openAppointmentEdit = (appointment: AppointmentItem) => {
+    // Extract worksheet selections from note if present
+    const noteText = appointment.note ?? '';
+    const selectionMatch = noteText.match(/\[\|WS_SEL\|([^\]]+)\]/);
+    const displayNote = noteText.replace(/\[\|WS_SEL\|[^\]]*\]/, '').trim();
+    
+    const subjects: SubjectCode[] = [];
+    const worksheets: Record<SubjectCode, string> = {};
+    
+    if (selectionMatch && selectionMatch[1]) {
+      const selections = selectionMatch[1].split(',');
+      selections.forEach((item) => {
+        const [subjectCode, level] = item.split(':');
+        if (subjectCode && level) {
+          const subject = subjectCode as SubjectCode;
+          if (!subjects.includes(subject)) {
+            subjects.push(subject);
+          }
+          worksheets[subject] = level;
+        }
+      });
+    }
+    
     setEditingAppointment(appointment);
     setAppointmentEditForm({
       scheduledAt: appointment.scheduledAt.slice(0, 16),
       status: appointment.status,
-      note: appointment.note ?? '',
+      note: displayNote,
     });
+    setAppointmentEditSubjects(subjects);
+    setAppointmentEditWorksheets(worksheets);
     setAppointmentEditOpen(true);
   };
 
@@ -275,6 +310,8 @@ export default function ConsultingPage() {
           scheduledAt: appointmentEditForm.scheduledAt,
           status: appointmentEditForm.status,
           note: appointmentEditForm.note,
+          selectedSubjects: appointmentEditSubjects.length > 0 ? appointmentEditSubjects : undefined,
+          selectedWorksheets: Object.keys(appointmentEditWorksheets).length > 0 ? appointmentEditWorksheets : undefined,
         }),
       });
 
@@ -579,7 +616,7 @@ export default function ConsultingPage() {
                     <TableCell>
                       <Badge className={getAppointmentStatusBadgeClass(appointment.status)}>{appointment.status}</Badge>
                     </TableCell>
-                    <TableCell className="max-w-[420px] truncate text-muted-foreground">{appointment.note || '-'}</TableCell>
+                    <TableCell className="max-w-[420px] truncate text-muted-foreground">{stripWorksheetSelectionMarker(appointment.note) || '-'}</TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); openAppointmentEdit(appointment); }}>
                         <Edit3 className="mr-2 h-4 w-4" />Chỉnh sửa
@@ -711,10 +748,10 @@ export default function ConsultingPage() {
       </Dialog>
 
       <Dialog open={appointmentEditOpen} onOpenChange={setAppointmentEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Chỉnh sửa lịch hẹn</DialogTitle>
-            <DialogDescription>Cập nhật ngày hẹn, trạng thái và ghi chú.</DialogDescription>
+            <DialogDescription>Cập nhật ngày hẹn, trạng thái, ghi chú và chọn bài DT nếu cần.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -749,6 +786,81 @@ export default function ConsultingPage() {
                 onChange={(event) => setAppointmentEditForm((current) => ({ ...current, note: event.target.value }))}
                 placeholder="Nội dung trao đổi, lưu ý, tình trạng liên hệ..."
               />
+            </div>
+
+            {/* Subject Selection Section */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div>
+                <Label className="text-sm font-semibold text-slate-900">Môn học quan tâm (tùy chọn)</Label>
+                <p className="text-xs text-slate-500 mt-1">Chọn môn học để điền bài DT tương ứng</p>
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                {['MATH', 'EFL'].map((subject) => (
+                  <Button
+                    key={subject}
+                    type="button"
+                    variant={appointmentEditSubjects.includes(subject as SubjectCode) ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setAppointmentEditSubjects((current) => {
+                        if (current.includes(subject as SubjectCode)) {
+                          return current.filter((s) => s !== subject);
+                        }
+                        return [...current, subject as SubjectCode];
+                      });
+                    }}
+                  >
+                    {getSubjectLabel(subject as SubjectCode)}
+                  </Button>
+                ))}
+              </div>
+
+              {/* Worksheet Selection for Selected Subjects */}
+              {appointmentEditSubjects.length > 0 && (
+                <div className="space-y-3 pt-2 border-t border-slate-200">
+                  {appointmentEditSubjects.map((subject) => (
+                    <div key={subject} className="space-y-2">
+                      <Label htmlFor={`edit-worksheet-${subject}`} className="text-sm">
+                        Bài DT - {getSubjectLabel(subject)}
+                      </Label>
+                      <Select 
+                        value={appointmentEditWorksheets[subject] || ''} 
+                        onValueChange={(value) => {
+                          setAppointmentEditWorksheets((current) => ({
+                            ...current,
+                            [subject]: value,
+                          }));
+                        }}
+                      >
+                        <SelectTrigger id={`edit-worksheet-${subject}`}>
+                          <SelectValue placeholder="Chọn bài DT..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(subject === 'MATH' ? DT_LEVELS_MATH : DT_LEVELS_EFL).map((level) => (
+                            <SelectItem key={level} value={level}>
+                              {level}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+
+                  {/* Show selected worksheets */}
+                  {Object.entries(appointmentEditWorksheets).some(([_, value]) => value) && (
+                    <div className="pt-2 flex flex-wrap gap-2">
+                      {Object.entries(appointmentEditWorksheets).map(([subject, worksheet]) => 
+                        worksheet && (
+                          <Badge key={`${subject}-${worksheet}`} variant="secondary">
+                            {getSubjectLabel(subject as SubjectCode)}: {worksheet}
+                          </Badge>
+                        )
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

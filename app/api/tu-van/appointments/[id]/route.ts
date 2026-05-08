@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
 
 export const runtime = 'nodejs';
 
@@ -35,12 +36,25 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
   }
 
   const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Encode worksheet selections into note with special marker
+    let noteToSave = typeof body.note === 'string' ? body.note : undefined;
+    if (body.selectedWorksheets && typeof body.selectedWorksheets === 'object') {
+      const worksheetEntries = Object.entries(body.selectedWorksheets) as Array<[string, string]>;
+      const selections = worksheetEntries
+        .filter(([subjectCode, level]) => level && subjectCode)
+        .map(([subjectCode, level]) => `${subjectCode}:${String(level).trim().toUpperCase()}`)
+        .join(',');
+      if (selections) {
+        noteToSave = `${noteToSave || ''}[|WS_SEL|${selections}]`;
+      }
+    }
+
     const updatedAppointment = await tx.appointment.update({
       where: { id: appointmentId },
       data: {
         scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : undefined,
         status: body.status ? toAppointmentStatus(body.status) : undefined,
-        note: typeof body.note === 'string' ? body.note : undefined,
+        note: noteToSave,
       },
     });
 
@@ -50,6 +64,52 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         where: { id: updatedAppointment.leadId },
         data: { status: leadStatusFromAppointmentStatus(updatedAppointment.status) },
       });
+    }
+
+    // Create worksheet usage records if worksheets are selected
+    if (body.selectedWorksheets && typeof body.selectedWorksheets === 'object') {
+      const worksheetEntries = Object.entries(body.selectedWorksheets) as Array<[string, string]>;
+      
+      for (const [subjectCode, level] of worksheetEntries) {
+        if (!level || !subjectCode) continue;
+
+        // Find or create worksheet batch for stock tracking
+        let stockBatch = await tx.worksheetBatch.findFirst({
+          where: {
+            centerId: DEFAULT_CENTER_ID,
+            subjectCode,
+            level: String(level).trim().toUpperCase(),
+            codeRange: String(level).trim().toUpperCase(),
+          },
+          orderBy: { receivedAt: 'desc' },
+        });
+
+        if (!stockBatch) {
+          stockBatch = await tx.worksheetBatch.create({
+            data: {
+              centerId: DEFAULT_CENTER_ID,
+              subjectCode,
+              level: String(level).trim().toUpperCase(),
+              codeRange: String(level).trim().toUpperCase(),
+              quantity: 0,
+              receivedAt: new Date(body.scheduledAt || new Date()),
+              note: '[WS_STOCK_TRACKING] auto-created from appointment',
+            },
+          });
+        }
+
+        // Create usage record with appointment reference
+        await tx.worksheetUsage.create({
+          data: {
+            batchId: stockBatch.id,
+            studentId: null,
+            quantity: 1,
+            usedAt: new Date(body.scheduledAt || new Date()),
+            preparedBy: null,
+            note: `[WS_APPOINTMENT_DT]${String(level).trim().toUpperCase()}`,
+          },
+        });
+      }
     }
 
     return updatedAppointment;

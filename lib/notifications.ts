@@ -262,7 +262,6 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
 
   const attendances = await prisma.attendance.findMany({
     where: {
-      ...(classGroupIds.length > 0 ? { classGroupId: { in: classGroupIds } } : {}),
       studentId: { in: studentIds },
       date: { gte: todayFrom, lte: todayTo },
       status: 'PRESENT',
@@ -272,16 +271,11 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
 
   type AttendancePresenceRow = (typeof attendances)[number];
 
-  const presentSet = new Set(attendances.map((item: AttendancePresenceRow) => `${item.classGroupId}-${item.studentId}`));
+  const presentStudentIds = new Set(attendances.map((item: AttendancePresenceRow) => item.studentId));
   await Promise.all(
     reminderCandidates
       .filter((item: PreClassEnrollmentRow) => {
-        if (item.resolvedClassGroupId) {
-          return !presentSet.has(`${item.resolvedClassGroupId}-${item.studentId}`);
-        }
-
-        const hasAnyPresentToday = attendances.some((attendance: AttendancePresenceRow) => attendance.studentId === item.studentId);
-        return !hasAnyPresentToday;
+        return !presentStudentIds.has(item.studentId);
       })
       .map((item: PreClassEnrollmentRow) => {
         const normalizedShift = item.resolvedClassShift;

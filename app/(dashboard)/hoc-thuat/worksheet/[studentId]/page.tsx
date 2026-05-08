@@ -1158,6 +1158,7 @@ export default function StudentWorksheetLogPage() {
         standardMinutes: Number(assessmentForm.standardMinutes),
         groupNo: Number(assessmentForm.groupNo),
         testDate: assessmentForm.testDate,
+        skipWorksheetTracking: true,
       };
 
       const response = await fetch('/api/hoc-thuat/assessments', {

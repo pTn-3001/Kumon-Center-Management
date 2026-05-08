@@ -8,6 +8,7 @@ export { runtime };
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const studentId = toNumber(body.studentId);
+  const skipWorksheetTracking = body.skipWorksheetTracking === true;
 
   if (!studentId || !body.subjectCode || !body.level) {
     return NextResponse.json({ message: 'Thiếu thông tin bài thi' }, { status: 400 });
@@ -32,42 +33,45 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  let stockBatch = await prisma.worksheetBatch.findFirst({
-    where: {
-      centerId: DEFAULT_CENTER_ID,
-      subjectCode: body.subjectCode,
-      level: normalizedWorksheetCode,
-      codeRange: normalizedWorksheetCode,
-    },
-    orderBy: { receivedAt: 'desc' },
-  });
-
-  if (!stockBatch) {
-    stockBatch = await prisma.worksheetBatch.create({
-      data: {
+  // Only track worksheet usage if not from worksheet log page
+  if (!skipWorksheetTracking) {
+    let stockBatch = await prisma.worksheetBatch.findFirst({
+      where: {
         centerId: DEFAULT_CENTER_ID,
         subjectCode: body.subjectCode,
         level: normalizedWorksheetCode,
         codeRange: normalizedWorksheetCode,
-        quantity: 0,
-        receivedAt: testDate,
-        note: '[WS_STOCK_TRACKING] auto-created from assessment',
+      },
+      orderBy: { receivedAt: 'desc' },
+    });
+
+    if (!stockBatch) {
+      stockBatch = await prisma.worksheetBatch.create({
+        data: {
+          centerId: DEFAULT_CENTER_ID,
+          subjectCode: body.subjectCode,
+          level: normalizedWorksheetCode,
+          codeRange: normalizedWorksheetCode,
+          quantity: 0,
+          receivedAt: testDate,
+          note: '[WS_STOCK_TRACKING] auto-created from assessment',
+        },
+      });
+    }
+
+    await prisma.worksheetUsage.create({
+      data: {
+        batchId: stockBatch.id,
+        studentId,
+        quantity: 1,
+        usedAt: testDate,
+        preparedBy: null,
+        note: `[WS_ASSESSMENT]${normalizedWorksheetCode}`,
       },
     });
+
+    await ensureLowStockNotifications(DEFAULT_CENTER_ID);
   }
-
-  await prisma.worksheetUsage.create({
-    data: {
-      batchId: stockBatch.id,
-      studentId,
-      quantity: 1,
-      usedAt: testDate,
-      preparedBy: null,
-      note: `[WS_ASSESSMENT]${normalizedWorksheetCode}`,
-    },
-  });
-
-  await ensureLowStockNotifications(DEFAULT_CENTER_ID);
 
   return NextResponse.json({
     id: created.id,

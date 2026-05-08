@@ -2633,7 +2633,7 @@ function StudentsPageContent() {
 
 export default function StudentsPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Dang tai...</div>}>
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Đang tải...</div>}>
       <StudentsPageContent />
     </Suspense>
   );
