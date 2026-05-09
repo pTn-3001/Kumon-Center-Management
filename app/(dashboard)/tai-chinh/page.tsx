@@ -114,6 +114,41 @@ function extractDisplayNote(note: string | null) {
   return note.slice(separatorIndex + 3).trim();
 }
 
+function getPreviousMonthKey(baseDate: Date) {
+  const previousMonth = new Date(baseDate.getFullYear(), baseDate.getMonth() - 1, 1);
+  return `${previousMonth.getFullYear()}-${String(previousMonth.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatSalaryMonthLabel(monthKey: string) {
+  const [year, month] = monthKey.split('-');
+  return `${Number(month)}/${year}`;
+}
+
+function getSalaryAmountForMonth(staff: ApiStaffItem, monthKey: string) {
+  if (isPartTimeStaff(staff)) {
+    const monthlyHours = (staff.timeEntries ?? [])
+      .filter((entry) => entry.workDate.startsWith(monthKey) && entry.clockOut)
+      .reduce((sum, entry) => {
+        const inTime = new Date(entry.clockIn).getTime();
+        const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
+        return sum + Math.max((outTime - inTime) / (1000 * 60 * 60), 0);
+      }, 0);
+
+    return Math.round(monthlyHours * (staff.hourlyRate ?? 0));
+  }
+
+  return computeSalaryPayment(staff).finalSalary;
+}
+
+function getSalaryDefaultNote(staffName: string, monthKey: string) {
+  return `Tiền lương của ${staffName} tháng ${formatSalaryMonthLabel(monthKey)}`;
+}
+
+function extractSalaryPayMonth(note: string | null) {
+  const match = /payMonth=(\d{4}-\d{2})/.exec(note ?? '');
+  return match?.[1] ?? '';
+}
+
 function isRevenueItem(item: Pick<ApiFinanceItem, 'note'>) {
   const note = item.note ?? '';
   return note.startsWith('[TUITION]') || note.startsWith('[ADMISSION_FEE]');
@@ -121,6 +156,7 @@ function isRevenueItem(item: Pick<ApiFinanceItem, 'note'>) {
 
 export default function FinancePage() {
   const today = useMemo(() => new Date(), []);
+  const defaultSalaryMonth = useMemo(() => getPreviousMonthKey(today), [today]);
   const [items, setItems] = useState<ApiFinancePayload>([]);
   const [staffItems, setStaffItems] = useState<ApiStaffItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,13 +165,18 @@ export default function FinancePage() {
   const [amount, setAmount] = useState('');
   const [spentAt, setSpentAt] = useState(new Date().toISOString().slice(0, 10));
   const [note, setNote] = useState('');
+  const [salaryMonth, setSalaryMonth] = useState(defaultSalaryMonth);
+  const [salaryNoteTouched, setSalaryNoteTouched] = useState(false);
+  const [salaryAmountTouched, setSalaryAmountTouched] = useState(false);
   const [proofName, setProofName] = useState('');
   const [salaryStaffId, setSalaryStaffId] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [formSalaryStaffId, setFormSalaryStaffId] = useState('');
-  const [expenseFilterMonth, setExpenseFilterMonth] = useState(String(today.getMonth() + 1));
-  const [expenseFilterYear, setExpenseFilterYear] = useState(String(today.getFullYear()));
+  const [formSalaryMonth, setFormSalaryMonth] = useState(defaultSalaryMonth);
+  const [formSalaryNoteTouched, setFormSalaryNoteTouched] = useState(false);
+  const [formSalaryAmountTouched, setFormSalaryAmountTouched] = useState(false);
+  const [expenseFilterPeriod, setExpenseFilterPeriod] = useState(today.toISOString().slice(0, 7));
 
   const loadStaffItems = async () => {
     const staffRes = await fetch('/api/he-thong/staff', { cache: 'no-store' });
@@ -179,6 +220,23 @@ export default function FinancePage() {
     void loadStaffItems();
   }, [editingId, form.type]);
 
+  useEffect(() => {
+    if (type !== 'Lương') {
+      return;
+    }
+
+    const selectedStaff = staffItems.find((candidate) => String(candidate.id) === salaryStaffId);
+    if (selectedStaff) {
+      if (!salaryAmountTouched) {
+        setAmount(formatNumberWithDots(getSalaryAmountForMonth(selectedStaff, salaryMonth)));
+      }
+
+      if (!salaryNoteTouched || !note.trim()) {
+        setNote(getSalaryDefaultNote(selectedStaff.fullName, salaryMonth));
+      }
+    }
+  }, [note, salaryAmountTouched, salaryMonth, salaryNoteTouched, salaryStaffId, staffItems, type]);
+
   const currentMonthKey = useMemo(() => today.toISOString().slice(0, 7), [today]);
 
   const currentMonthItems = useMemo(
@@ -194,24 +252,9 @@ export default function FinancePage() {
         return false;
       }
 
-      const spentDate = new Date(item.spentAt);
-      return (
-        spentDate.getFullYear() === Number(expenseFilterYear)
-        && spentDate.getMonth() + 1 === Number(expenseFilterMonth)
-      );
+      return item.spentAt.slice(0, 7) === expenseFilterPeriod;
     });
-  }, [expenseFilterMonth, expenseFilterYear, items]);
-
-  const expenseFilterYears = useMemo(() => {
-    const years = new Set<number>([today.getFullYear()]);
-    items.forEach((item) => {
-      if (!isRevenueItem(item)) {
-        years.add(new Date(item.spentAt).getFullYear());
-      }
-    });
-
-    return Array.from(years).sort((a, b) => b - a);
-  }, [items, today]);
+  }, [expenseFilterPeriod, items]);
 
   const summary = useMemo(() => {
     const totalExpense = currentMonthExpenseItems.reduce((sum, item) => sum + item.amount, 0);
@@ -276,8 +319,7 @@ export default function FinancePage() {
       return null;
     }
 
-    const selectedDateText = editingId ? form.spentAt : spentAt;
-    const selectedMonthPrefix = selectedDateText.slice(0, 7);
+    const selectedMonthPrefix = editingId ? formSalaryMonth : salaryMonth;
 
     if (isPartTimeStaff(staff)) {
       const monthlyHours = (staff.timeEntries ?? [])
@@ -307,7 +349,7 @@ export default function FinancePage() {
       monthlyHours: 0,
       hourlyRate: 0,
     };
-  }, [contractStaffItems, editingId, form.spentAt, form.type, formSalaryStaffId, salaryStaffId, spentAt, type]);
+  }, [contractStaffItems, editingId, form.type, formSalaryMonth, formSalaryStaffId, salaryMonth, salaryStaffId, type]);
 
   async function refreshItems() {
     const response = await fetch('/api/tai-chinh', { cache: 'no-store' });
@@ -321,21 +363,27 @@ export default function FinancePage() {
     const salaryStaffMatch = /\[SALARY\]\s*staffId=(\d+)/.exec(item.note ?? '');
     const matchedStaffId = salaryStaffMatch?.[1] ?? '';
     const displayNote = extractDisplayNote(item.note);
+    const matchedSalaryMonth = extractSalaryPayMonth(item.note);
+    const fallbackSalaryMonth = getPreviousMonthKey(new Date(item.spentAt));
+    const resolvedSalaryMonth = matchedSalaryMonth || fallbackSalaryMonth;
+    const resolvedDisplayNote = displayNote || getSalaryDefaultNote(staffItems.find((candidate) => String(candidate.id) === matchedStaffId)?.fullName ?? 'nhân viên', resolvedSalaryMonth);
 
     setEditingId(item.id);
     setForm({
       type: item.type,
       amount: formatNumberWithDots(item.amount),
       spentAt: item.spentAt.slice(0, 10),
-      note: displayNote,
+      note: resolvedDisplayNote,
       proofImage: item.proofImage ?? '',
     });
     setType(item.type);
     setAmount(formatNumberWithDots(item.amount));
     setSpentAt(item.spentAt.slice(0, 10));
-    setNote(displayNote);
+    setNote(resolvedDisplayNote);
     setProofName(item.proofImage ?? '');
     setFormSalaryStaffId(matchedStaffId);
+    setFormSalaryMonth(resolvedSalaryMonth);
+    setFormSalaryNoteTouched(displayNote !== getSalaryDefaultNote(staffItems.find((candidate) => String(candidate.id) === matchedStaffId)?.fullName ?? 'nhân viên', resolvedSalaryMonth));
 
     if (item.type === 'Lương' && matchedStaffId) {
       const staff = staffItems.find((candidate) => String(candidate.id) === matchedStaffId);
@@ -360,14 +408,18 @@ export default function FinancePage() {
         ? contractStaffItems.find((staff) => String(staff.id) === selectedSalaryStaffId) ?? null
         : null;
 
+      const selectedSalaryMonth = isEditing ? formSalaryMonth : salaryMonth;
+      const selectedSalaryStaff = selectedSalaryStaffId
+        ? contractStaffItems.find((staff) => String(staff.id) === selectedSalaryStaffId) ?? null
+        : null;
+
       const salaryPayment = selectedType === 'Lương' && selectedStaff
         ? computeSalaryPayment(selectedStaff)
         : null;
 
-      const selectedMonthPrefix = (isEditing ? form.spentAt : spentAt).slice(0, 7);
       const monthlyHours = selectedType === 'Lương' && selectedStaff && isPartTimeStaff(selectedStaff)
         ? (selectedStaff.timeEntries ?? [])
-          .filter((entry) => entry.workDate.startsWith(selectedMonthPrefix) && entry.clockOut)
+          .filter((entry) => entry.workDate.startsWith(selectedSalaryMonth) && entry.clockOut)
           .reduce((sum, entry) => {
             const inTime = new Date(entry.clockIn).getTime();
             const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
@@ -380,11 +432,12 @@ export default function FinancePage() {
 
       const rawNote = isEditing ? form.note : note;
       const cleanNote = rawNote.replace(/\[SALARY\][^\n]*/g, '').trim();
+      const noteBody = cleanNote || (selectedSalaryStaff ? getSalaryDefaultNote(selectedSalaryStaff.fullName, selectedSalaryMonth) : '');
       const salaryPrefix = selectedType === 'Lương' && selectedStaff
-        ? `[SALARY] staffId=${selectedStaff.id};staffName=${selectedStaff.fullName};employmentType=${isPartTimeStaff(selectedStaff) ? 'Part-time' : 'Full-time'};leaveDays=${salaryPayment?.leaveDaysInContract ?? 0};deductedDays=${salaryPayment?.deductedDays ?? 0};baseSalary=${selectedStaff.salary};deduction=${salaryPayment?.deductionAmount ?? 0};hourlyRate=${selectedStaff.hourlyRate ?? 0};hours=${monthlyHours.toFixed(2)}`
+        ? `[SALARY] staffId=${selectedStaff.id};staffName=${selectedStaff.fullName};employmentType=${isPartTimeStaff(selectedStaff) ? 'Part-time' : 'Full-time'};payMonth=${selectedSalaryMonth};leaveDays=${salaryPayment?.leaveDaysInContract ?? 0};deductedDays=${salaryPayment?.deductedDays ?? 0};baseSalary=${selectedStaff.salary};deduction=${salaryPayment?.deductionAmount ?? 0};hourlyRate=${selectedStaff.hourlyRate ?? 0};hours=${monthlyHours.toFixed(2)}`
         : '';
 
-      const normalizedNote = [salaryPrefix, cleanNote].filter((part) => part.length > 0).join(' | ');
+      const normalizedNote = [salaryPrefix, noteBody].filter((part) => part.length > 0).join(' | ');
 
       const payload = {
         type: selectedType,
@@ -412,9 +465,15 @@ export default function FinancePage() {
       setAmount('');
       setSpentAt(new Date().toISOString().slice(0, 10));
       setNote('');
+      setSalaryAmountTouched(false);
+      setSalaryMonth(defaultSalaryMonth);
+      setSalaryNoteTouched(false);
       setProofName('');
       setSalaryStaffId('');
       setFormSalaryStaffId('');
+      setFormSalaryAmountTouched(false);
+      setFormSalaryMonth(defaultSalaryMonth);
+      setFormSalaryNoteTouched(false);
       await refreshItems();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Không thể lưu khoản chi');
@@ -476,11 +535,77 @@ export default function FinancePage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Loại chi</Label>
-              <Select value={editingId ? form.type : type} onValueChange={(value) => editingId ? setForm((current) => ({ ...current, type: value as FinanceType })) : setType(value as FinanceType)}>
+              <Select value={editingId ? form.type : type} onValueChange={(value) => {
+                const nextType = value as FinanceType;
+                if (editingId) {
+                  setForm((current) => ({ ...current, type: nextType }));
+                  if (nextType === 'Lương') {
+                    setFormSalaryMonth(defaultSalaryMonth);
+                    setFormSalaryNoteTouched(false);
+                    setFormSalaryAmountTouched(false);
+                    const staff = contractStaffItems.find((candidate) => String(candidate.id) === formSalaryStaffId);
+                    if (staff) {
+                      setForm((current) => ({
+                        ...current,
+                        amount: formatNumberWithDots(getSalaryAmountForMonth(staff, defaultSalaryMonth)),
+                        note: getSalaryDefaultNote(staff.fullName, defaultSalaryMonth),
+                      }));
+                    }
+                  }
+                  return;
+                }
+
+                setType(nextType);
+                if (nextType === 'Lương') {
+                  setSalaryMonth(defaultSalaryMonth);
+                  setSalaryNoteTouched(false);
+                  setSalaryAmountTouched(false);
+                  const staff = contractStaffItems.find((candidate) => String(candidate.id) === salaryStaffId);
+                  if (staff) {
+                    setAmount(formatNumberWithDots(getSalaryAmountForMonth(staff, defaultSalaryMonth)));
+                    setNote(getSalaryDefaultNote(staff.fullName, defaultSalaryMonth));
+                  }
+                }
+              }}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>{expenseTypes.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent>
               </Select>
             </div>
+            {(editingId ? form.type : type) === 'Lương' ? (
+              <div className="space-y-2">
+                <Label>Tháng lương</Label>
+                <Input
+                  type="month"
+                  value={editingId ? formSalaryMonth : salaryMonth}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (editingId) {
+                      setFormSalaryMonth(nextValue);
+                      const staff = contractStaffItems.find((candidate) => String(candidate.id) === formSalaryStaffId);
+                      if (staff) {
+                        setFormSalaryAmountTouched(false);
+                        setFormSalaryNoteTouched(false);
+                        setForm((current) => ({
+                          ...current,
+                          amount: formatNumberWithDots(getSalaryAmountForMonth(staff, nextValue)),
+                          note: getSalaryDefaultNote(staff.fullName, nextValue),
+                        }));
+                      }
+                      return;
+                    }
+
+                    setSalaryMonth(nextValue);
+                    const staff = contractStaffItems.find((candidate) => String(candidate.id) === salaryStaffId);
+                    if (staff) {
+                      setSalaryAmountTouched(false);
+                      setSalaryNoteTouched(false);
+                      setAmount(formatNumberWithDots(getSalaryAmountForMonth(staff, nextValue)));
+                      setNote(getSalaryDefaultNote(staff.fullName, nextValue));
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
             {(editingId ? form.type : type) === 'Lương' ? (
               <div className="space-y-2">
                 <Label>Nhân viên (còn hợp đồng)</Label>
@@ -491,39 +616,22 @@ export default function FinancePage() {
                     if (editingId) {
                       setFormSalaryStaffId(value);
                       if (staff) {
-                          if (isPartTimeStaff(staff)) {
-                            const monthPrefix = form.spentAt.slice(0, 7);
-                            const monthlyHours = (staff.timeEntries ?? [])
-                              .filter((entry) => entry.workDate.startsWith(monthPrefix) && entry.clockOut)
-                              .reduce((sum, entry) => {
-                                const inTime = new Date(entry.clockIn).getTime();
-                                const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
-                                return sum + Math.max((outTime - inTime) / (1000 * 60 * 60), 0);
-                              }, 0);
-                            setForm((current) => ({ ...current, amount: formatNumberWithDots(Math.round(monthlyHours * (staff.hourlyRate ?? 0))) }));
-                          } else {
-                            const salaryPayment = computeSalaryPayment(staff);
-                            setForm((current) => ({ ...current, amount: formatNumberWithDots(salaryPayment.finalSalary) }));
-                          }
+                        setFormSalaryAmountTouched(false);
+                        setFormSalaryNoteTouched(false);
+                        setForm((current) => ({
+                          ...current,
+                          amount: formatNumberWithDots(getSalaryAmountForMonth(staff, formSalaryMonth)),
+                          note: getSalaryDefaultNote(staff.fullName, formSalaryMonth),
+                        }));
                       }
                       return;
                     }
                     setSalaryStaffId(value);
                     if (staff) {
-                        if (isPartTimeStaff(staff)) {
-                          const monthPrefix = spentAt.slice(0, 7);
-                          const monthlyHours = (staff.timeEntries ?? [])
-                            .filter((entry) => entry.workDate.startsWith(monthPrefix) && entry.clockOut)
-                            .reduce((sum, entry) => {
-                              const inTime = new Date(entry.clockIn).getTime();
-                              const outTime = entry.clockOut ? new Date(entry.clockOut).getTime() : inTime;
-                              return sum + Math.max((outTime - inTime) / (1000 * 60 * 60), 0);
-                            }, 0);
-                          setAmount(formatNumberWithDots(Math.round(monthlyHours * (staff.hourlyRate ?? 0))));
-                        } else {
-                          const salaryPayment = computeSalaryPayment(staff);
-                          setAmount(formatNumberWithDots(salaryPayment.finalSalary));
-                        }
+                      setSalaryAmountTouched(false);
+                      setSalaryNoteTouched(false);
+                      setAmount(formatNumberWithDots(getSalaryAmountForMonth(staff, salaryMonth)));
+                      setNote(getSalaryDefaultNote(staff.fullName, salaryMonth));
                     }
                   }}
                 >
@@ -563,13 +671,14 @@ export default function FinancePage() {
                 type="text"
                 inputMode="numeric"
                 value={editingId ? form.amount : amount}
-                disabled={(editingId ? form.type : type) === 'Lương' && Boolean(editingId ? formSalaryStaffId : salaryStaffId)}
                 onChange={(event) => {
                   const formatted = formatNumberWithDots(event.target.value);
                   if (editingId) {
+                    setFormSalaryAmountTouched(true);
                     setForm((current) => ({ ...current, amount: formatted }));
                     return;
                   }
+                  setSalaryAmountTouched(true);
                   setAmount(formatted);
                 }}
                 placeholder="Nhập số tiền..."
@@ -588,7 +697,20 @@ export default function FinancePage() {
             </div>
             <div className="space-y-2">
               <Label>Ghi chú</Label>
-              <Input value={editingId ? form.note : note} onChange={(event) => editingId ? setForm((current) => ({ ...current, note: event.target.value })) : setNote(event.target.value)} placeholder="Ghi chú ngắn..." />
+              <Input
+                value={editingId ? form.note : note}
+                onChange={(event) => {
+                  if (editingId) {
+                    setFormSalaryNoteTouched(true);
+                    setForm((current) => ({ ...current, note: event.target.value }));
+                    return;
+                  }
+
+                  setSalaryNoteTouched(true);
+                  setNote(event.target.value);
+                }}
+                placeholder="Ghi chú ngắn..."
+              />
             </div>
             <div className="flex gap-2">
               <Button className="flex-1" onClick={() => void submitFinance()}><PlusCircle className="mr-2 h-4 w-4" />{editingId ? 'Cập nhật' : 'Thêm khoản chi'}</Button>
@@ -603,27 +725,10 @@ export default function FinancePage() {
           <CardTitle>Danh sách chi tiền</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:max-w-md md:grid-cols-2">
+          <div className="max-w-xs space-y-2">
             <div className="space-y-2">
-              <Label>Tháng</Label>
-              <Select value={expenseFilterMonth} onValueChange={setExpenseFilterMonth}>
-                <SelectTrigger><SelectValue placeholder="Chọn tháng" /></SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: 12 }, (_, index) => {
-                    const month = String(index + 1);
-                    return <SelectItem key={month} value={month}>Tháng {month}</SelectItem>;
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Năm</Label>
-              <Select value={expenseFilterYear} onValueChange={setExpenseFilterYear}>
-                <SelectTrigger><SelectValue placeholder="Chọn năm" /></SelectTrigger>
-                <SelectContent>
-                  {expenseFilterYears.map((year) => <SelectItem key={year} value={String(year)}>{year}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label>Tháng/Năm</Label>
+              <Input type="month" value={expenseFilterPeriod} onChange={(event) => setExpenseFilterPeriod(event.target.value)} />
             </div>
           </div>
 

@@ -49,10 +49,15 @@ function parseSalaryMeta(note: string) {
   }).filter((item): item is [string, string] => Boolean(item));
 
   const map = Object.fromEntries(entries);
+  const payMonthMatch = /^(\d{4})-(\d{2})$/.exec(map.payMonth ?? '');
+  const payMonthLabel = payMonthMatch ? `${Number(payMonthMatch[2])}/${payMonthMatch[1]}` : null;
+
   return {
     staffId: map.staffId ? Number(map.staffId) : null,
     staffName: map.staffName ?? 'không xác định',
     employmentType: map.employmentType ?? 'Full-time',
+    payMonth: map.payMonth ?? '',
+    payMonthLabel,
     leaveDays: map.leaveDays ? Number(map.leaveDays) : 0,
     deductedDays: map.deductedDays ? Number(map.deductedDays) : 0,
     baseSalary: map.baseSalary ? Number(map.baseSalary) : 0,
@@ -104,7 +109,7 @@ export async function POST(request: NextRequest) {
 
   if (shouldNotify && note.startsWith('[SALARY]')) {
     const salaryMeta = parseSalaryMeta(note);
-    const monthLabel = `${created.spentAt.getMonth() + 1}/${created.spentAt.getFullYear()}`;
+    const monthLabel = salaryMeta.payMonthLabel ?? `${created.spentAt.getMonth() + 1}/${created.spentAt.getFullYear()}`;
     const amountText = `${Number(created.amount).toLocaleString('vi-VN')}đ`;
     const message = salaryMeta.employmentType === 'Part-time'
       ? `Chi lương Part-time cho ${salaryMeta.staffName} tháng ${monthLabel}: ${amountText} (${salaryMeta.hours.toFixed(2)} giờ x ${salaryMeta.hourlyRate.toLocaleString('vi-VN')}đ/giờ).${salaryMeta.userNote ? ` Ghi chú: ${salaryMeta.userNote}.` : ''}`
@@ -113,7 +118,7 @@ export async function POST(request: NextRequest) {
     await createNotification({
       centerId: DEFAULT_CENTER_ID,
       type: 'SALARY_PAID',
-      title: 'Đã chi lương nhân sự',
+      title: 'Chi lương nhân sự',
       message,
       targetRoles: ['ADMIN', 'CONSULTANT'],
     });
