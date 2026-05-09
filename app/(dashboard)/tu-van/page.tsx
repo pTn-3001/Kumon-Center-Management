@@ -108,7 +108,9 @@ export default function ConsultingPage() {
     note: '',
   });
   const [appointmentEditSubjects, setAppointmentEditSubjects] = useState<SubjectCode[]>([]);
-  const [appointmentEditWorksheets, setAppointmentEditWorksheets] = useState<Record<SubjectCode, string>>({});
+  const [appointmentEditWorksheets, setAppointmentEditWorksheets] = useState<Record<SubjectCode, string>>(
+    () => ({} as Record<SubjectCode, string>)
+  );
   const [newLead, setNewLead] = useState({
     fullName: '',
     parentPhone: '',
