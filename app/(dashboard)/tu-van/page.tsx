@@ -108,9 +108,7 @@ export default function ConsultingPage() {
     note: '',
   });
   const [appointmentEditSubjects, setAppointmentEditSubjects] = useState<SubjectCode[]>([]);
-  const [appointmentEditWorksheets, setAppointmentEditWorksheets] = useState<Record<SubjectCode, string>>(
-    () => ({} as Record<SubjectCode, string>)
-  );
+  const [appointmentEditWorksheets, setAppointmentEditWorksheets] = useState<Partial<Record<SubjectCode, string>>>({});
   const [newLead, setNewLead] = useState({
     fullName: '',
     parentPhone: '',
@@ -273,7 +271,7 @@ export default function ConsultingPage() {
     const displayNote = noteText.replace(/\[\|WS_SEL\|[^\]]*\]/, '').trim();
     
     const subjects: SubjectCode[] = [];
-    const worksheets: Record<SubjectCode, string> = {};
+    const worksheets: Partial<Record<SubjectCode, string>> = {};
     
     if (selectionMatch && selectionMatch[1]) {
       const selections = selectionMatch[1].split(',');

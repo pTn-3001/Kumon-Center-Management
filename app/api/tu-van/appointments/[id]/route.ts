@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
+import type { SubjectCode } from '@/types';
 
 export const runtime = 'nodejs';
 
@@ -24,6 +25,10 @@ function leadStatusFromAppointmentStatus(value: 'WAITING' | 'DONE' | 'RESCHEDULE
   if (value === 'DONE') return 'CONTACTED';
   if (value === 'RESCHEDULED') return 'INTERESTED';
   return 'INTERESTED';
+}
+
+function isSubjectCode(value: string): value is SubjectCode {
+  return value === 'MATH' || value === 'EFL';
 }
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -72,12 +77,15 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       
       for (const [subjectCode, level] of worksheetEntries) {
         if (!level || !subjectCode) continue;
+        if (!isSubjectCode(subjectCode)) continue;
+
+        const normalizedSubjectCode = subjectCode;
 
         // Find or create worksheet batch for stock tracking
         let stockBatch = await tx.worksheetBatch.findFirst({
           where: {
             centerId: DEFAULT_CENTER_ID,
-            subjectCode,
+            subjectCode: normalizedSubjectCode,
             level: String(level).trim().toUpperCase(),
             codeRange: String(level).trim().toUpperCase(),
           },
@@ -88,7 +96,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
           stockBatch = await tx.worksheetBatch.create({
             data: {
               centerId: DEFAULT_CENTER_ID,
-              subjectCode,
+              subjectCode: normalizedSubjectCode,
               level: String(level).trim().toUpperCase(),
               codeRange: String(level).trim().toUpperCase(),
               quantity: 0,
