@@ -246,7 +246,7 @@ function ClassPageContent() {
       return;
     }
 
-    setExtraStudentDate(getDateForWeekdayInCurrentWeek(selectedClass.weekday));
+    setExtraStudentDate(new Date().toISOString().slice(0, 10));
   }, [selectedClass]);
 
   const mergedClassGroups = useMemo(() => {
@@ -291,13 +291,6 @@ function ClassPageContent() {
     const [, weekday] = makeUpClassKey.split('-') as [SubjectCode, Weekday];
     return weekday;
   }, [makeUpClassKey]);
-
-  const selectedClassGroupIds = useMemo(() => {
-    if (!selectedClass) return [] as number[];
-    return data.classGroups
-      .filter((group) => group.subjectCode === selectedClass.subjectCode && group.weekday === selectedClass.weekday)
-      .map((group) => group.id);
-  }, [data.classGroups, selectedClass]);
 
   const weekRange = useMemo(() => getDateRangeForCurrentWeek(), []);
 
@@ -374,11 +367,7 @@ function ClassPageContent() {
         .map((group) => group.id);
       const selectedSet = new Set(classGroupIds);
 
-      const baseEnrollments = (mergedClassGroups.get(key)?.enrollments ?? []).filter((enrollment) => {
-        const targetClassGroupId = weeklyMakeUpMap.get(enrollment.studentId);
-        if (!targetClassGroupId) return true;
-        return selectedSet.has(targetClassGroupId);
-      });
+      const baseEnrollments = mergedClassGroups.get(key)?.enrollments ?? [];
 
       const existingStudentIds = new Set(baseEnrollments.map((enrollment) => enrollment.studentId));
       const movedInRows: EffectiveEnrollmentRow[] = [];
@@ -465,14 +454,12 @@ function ClassPageContent() {
         return;
       }
 
-      const makeUpTarget = weeklyMakeUpMap.get(enrollment.student.id);
-      const isInMakeUpElsewhere = Boolean(makeUpTarget && !selectedClassGroupIds.includes(makeUpTarget));
-      if (!isInMakeUpElsewhere && !map.has(enrollment.student.id)) {
+      if (!map.has(enrollment.student.id)) {
         map.set(enrollment.student.id, enrollment.student);
       }
     });
     return Array.from(map.values());
-  }, [selectedClassEffectiveEnrollments, selectedClassGroupIds, weeklyMakeUpMap]);
+  }, [selectedClassEffectiveEnrollments]);
 
   useEffect(() => {
     if (!selectedStudentFromQuery) return;

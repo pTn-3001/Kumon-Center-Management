@@ -159,6 +159,16 @@ function isWorksheetCodeValid(level: string, numberText: string) {
     return true;
   }
 
+  // ZI and ZII can use any number with valid tail pattern
+  if (normalizedLevel === 'ZI' || normalizedLevel === 'ZII') {
+    const number = Number(numberText);
+    if (!Number.isInteger(number) || number <= 0) {
+      return false;
+    }
+    const allowedTails = [1, 5, 6, 8];
+    return allowedTails.includes(number % 10);
+  }
+
   return normalizedLevel.length > 0 && /^\d+$/.test(numberText) && Number(numberText) > 0;
 }
 
@@ -179,11 +189,13 @@ function isWritingNumberAllowed(level: string, numberText: string) {
 
   const allowedTails = [1, 5, 6, 8];
   if (level === 'ZI') {
-    return number >= 21 && number <= 91 && allowedTails.includes(number % 10);
+    // Allow up to 191 to support proper division beyond 91
+    return number >= 21 && number <= 191 && allowedTails.includes(number % 10);
   }
 
   if (level === 'ZII') {
-    return number >= 1 && number <= 91 && allowedTails.includes(number % 10);
+    // Allow up to 191 to support proper division beyond 91
+    return number >= 1 && number <= 191 && allowedTails.includes(number % 10);
   }
 
   return false;
@@ -317,14 +329,15 @@ function getWorksheetStepFromHistory(codes: string[]) {
 }
 
 function getHistoricalWorksheetStep(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const isWritingLevel = targetLevel === 'ZI' || targetLevel === 'ZII';
   const recentDates = Array.from(new Set(rows
-    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && (isWritingLevel ? row.isWriting : !row.isWriting))
     .map((row) => row.date)))
     .sort()
     .slice(-4);
 
   const recentCodes = recentDates.flatMap((dateValue) => rows
-    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && (isWritingLevel ? row.isWriting : !row.isWriting))
     .slice()
     .sort(compareWorksheetRows)
     .map((row) => row.worksheet)
@@ -337,14 +350,15 @@ function getHistoricalWorksheetStep(rows: AssignmentRow[], selectedDate: string,
 }
 
 function getHistoricalWorksheetStepCycle(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const isWritingLevel = targetLevel === 'ZI' || targetLevel === 'ZII';
   const recentDates = Array.from(new Set(rows
-    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && (isWritingLevel ? row.isWriting : !row.isWriting))
     .map((row) => row.date)))
     .sort()
     .slice(-4);
 
   const recentCodes = recentDates.flatMap((dateValue) => rows
-    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && (isWritingLevel ? row.isWriting : !row.isWriting))
     .slice()
     .sort(compareWorksheetRows)
     .map((row) => row.worksheet)
@@ -371,14 +385,15 @@ function getHistoricalWorksheetStepCycle(rows: AssignmentRow[], selectedDate: st
 }
 
 function getHistoricalMainWorksheetDefault(rows: AssignmentRow[], selectedDate: string, subjectCode: SubjectCode, targetLevel: string) {
+  const isWritingLevel = targetLevel === 'ZI' || targetLevel === 'ZII';
   const recentDates = Array.from(new Set(rows
-    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date < selectedDate && (isWritingLevel ? row.isWriting : !row.isWriting))
     .map((row) => row.date)))
     .sort()
     .slice(-4);
 
   const recentCodes = recentDates.flatMap((dateValue) => rows
-    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && !row.isWriting)
+    .filter((row) => row.subjectCode === subjectCode && row.date === dateValue && (isWritingLevel ? row.isWriting : !row.isWriting))
     .slice()
     .sort(compareWorksheetRows)
     .map((row) => row.worksheet)
@@ -912,14 +927,13 @@ export default function StudentWorksheetLogPage() {
       }
     }
 
-    if (includeWriting && !isWorksheetCodeValid(writingLevel, writingNumber)) {
-      setPanelError('Worksheet kỹ năng viết chưa hợp lệ.');
-      return;
-    }
-
-    if (includeWriting && !isWritingNumberAllowed(writingLevel, writingNumber)) {
-      setPanelError('Mã kỹ năng viết phải theo quy tắc: ZI21..ZI91 hoặc ZII11..ZII91 và thuộc các mẫu 100%, 5:5, 4:3:3.');
-      return;
+    if (includeWriting) {
+      const trimmedWritingNumber = writingNumber.trim();
+      if (!trimmedWritingNumber || !Number.isInteger(Number(trimmedWritingNumber)) || !isWritingNumberAllowed(writingLevel, trimmedWritingNumber)) {
+        const rangeText = writingLevel === 'ZI' ? 'ZI21..ZI191' : 'ZII1..ZII191';
+        setPanelError(`Mã kỹ năng viết không hợp lệ. Vui lòng nhập số trong phạm vi ${rangeText} với phần tử hàng đơn vị là 1, 5, 6 hoặc 8.`);
+        return;
+      }
     }
 
     if (includeCorrection) {
@@ -1668,7 +1682,20 @@ export default function StudentWorksheetLogPage() {
               {includeWriting ? (
                 <>
                   <div className="grid grid-cols-[1fr_1fr] gap-2">
-                    <Select value={writingLevel} onValueChange={setWritingLevel}>
+                    <Select
+                      value={writingLevel}
+                      onValueChange={(value) => {
+                        setWritingLevel(value);
+                        // Auto-update number when level changes
+                        const historicalDefault = getHistoricalWritingDefault(subjectRows, selectedDate, subjectCode, value);
+                        if (historicalDefault) {
+                          setWritingNumber(historicalDefault.number);
+                        } else {
+                          // Set appropriate default for the level
+                          setWritingNumber(value === 'ZII' ? '1' : '21');
+                        }
+                      }}
+                    >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent className="z-[210]">
                         <SelectItem value="ZI">ZI</SelectItem>

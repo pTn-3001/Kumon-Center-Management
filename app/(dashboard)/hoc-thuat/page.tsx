@@ -102,7 +102,10 @@ type WorksheetAssignmentRow = {
   studentId: number;
   subjectCode: SubjectCode;
   date: string;
+  usedAt: string;
   worksheet: string;
+  isWriting: boolean;
+  isCorrection: boolean;
 };
 
 type StockRow = {
@@ -183,6 +186,7 @@ type KhoSubTab = typeof khoSubTabs[number];
 const WORKSHEET_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN]';
 const WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX = '[WS_ASSIGN_WRITING]';
 const WORKSHEET_DAILY_NOTE_PREFIX = '[WS_DAILY_NOTE]';
+const WORKSHEET_CORRECTION_NOTE_PREFIX = '[WS_CORRECTION]';
 const WORKSHEET_ASSIGNMENT_BATCH_NOTE_PREFIX = '[WS_ASSIGNMENT_BATCH]';
 const WORKSHEET_WRITING_BATCH_NOTE_PREFIX = '[WS_WRITING_BATCH]';
 const WORKSHEET_EXTRA_NOTE_PREFIX = '[WS_EXTRA]';
@@ -364,6 +368,71 @@ function getWorksheetNumberOptions(level: string) {
   return options;
 }
 
+function getStockLevelOptionsForSubject(subject: InventorySubject) {
+  if (subject === 'WRITING') {
+    return ['ZI', 'ZII'];
+  }
+
+  const baseLevels = levelBySubject[subject].filter((level) => !level.startsWith('AT-') && !level.startsWith('DT-'));
+  return [...baseLevels, 'AT', 'DT'];
+}
+
+function getCenterInventoryLevelsForSubject(subject: InventorySubject) {
+  if (subject === 'WRITING') {
+    return ['ZI', 'ZII'];
+  }
+
+  return getStockLevelOptionsForSubject(subject);
+}
+
+function getWorksheetCodesForInventoryLevel(subject: InventorySubject, level: string) {
+  if (subject === 'WRITING') {
+    if (level === 'ZI') {
+      return [21, 31, 41, 51, 61, 71, 81, 91].map((numberValue) => `${level}${numberValue}`);
+    }
+
+    if (level === 'ZII') {
+      return [1, 11, 21, 31, 41, 51, 61, 71, 81, 91].map((numberValue) => `${level}${numberValue}`);
+    }
+
+    return [];
+  }
+
+  if (level === 'AT' || level === 'DT') {
+    return levelBySubject[subject].filter((item) => item.startsWith(`${level}-`));
+  }
+
+  if (isFixedWorksheetCodeLevel(level)) {
+    return [level];
+  }
+
+  return getWorksheetNumberOptions(level).map((numberValue) => `${level}${numberValue}`);
+}
+
+function getCenterInventoryWorksheetEntries() {
+  const entries: Array<{ subject: InventorySubject; level: string; worksheetCode: string }> = [];
+
+  getCenterInventoryLevelsForSubject('MATH').forEach((level) => {
+    getWorksheetCodesForInventoryLevel('MATH', level).forEach((worksheetCode) => {
+      entries.push({ subject: 'MATH', level, worksheetCode });
+    });
+  });
+
+  getCenterInventoryLevelsForSubject('EFL').forEach((level) => {
+    getWorksheetCodesForInventoryLevel('EFL', level).forEach((worksheetCode) => {
+      entries.push({ subject: 'EFL', level, worksheetCode });
+    });
+  });
+
+  ['ZI', 'ZII'].forEach((level) => {
+    getWorksheetCodesForInventoryLevel('WRITING', level).forEach((worksheetCode) => {
+      entries.push({ subject: 'WRITING', level, worksheetCode });
+    });
+  });
+
+  return entries;
+}
+
 function getInventorySubjectFromBatch(batch: AcademicWorksheetBatch) {
   if (batch.note?.startsWith(WORKSHEET_WRITING_BATCH_NOTE_PREFIX)) {
     return 'WRITING' as const;
@@ -376,6 +445,18 @@ function getInventorySubjectLabel(subject: InventorySubject) {
     return 'Kỹ năng viết';
   }
   return getSubjectLabel(subject);
+}
+
+function getDefaultLevelForInventorySubject(subject: InventorySubject) {
+  if (subject === 'MATH') {
+    return '6A';
+  }
+
+  if (subject === 'EFL') {
+    return '7A';
+  }
+
+  return 'ZI';
 }
 
 function toDateTimeInputValue(value: string | Date) {
@@ -400,10 +481,10 @@ function AcademicWarehousePageContent() {
   const [assessmentForm, setAssessmentForm] = useState(emptyAssessmentForm);
   const [batchForm, setBatchForm] = useState(emptyBatchForm);
   const [inventorySubject, setInventorySubject] = useState<InventorySubject>('MATH');
-  const [inventoryWorksheetLevel, setInventoryWorksheetLevel] = useState('A');
+  const [inventoryWorksheetLevel, setInventoryWorksheetLevel] = useState(() => getDefaultLevelForInventorySubject('MATH'));
   const [inventoryWorksheetNumber, setInventoryWorksheetNumber] = useState('1');
   const [stockSubject, setStockSubject] = useState<InventorySubject>('MATH');
-  const [stockLevel, setStockLevel] = useState('A');
+  const [stockLevel, setStockLevel] = useState(() => getDefaultLevelForInventorySubject('MATH'));
   const [stockMonthFilter, setStockMonthFilter] = useState(String(new Date().getMonth() + 1));
   const [stockYearFilter, setStockYearFilter] = useState(String(new Date().getFullYear()));
   const [selectedStockRow, setSelectedStockRow] = useState<StockRow | null>(null);
@@ -513,8 +594,8 @@ function AcademicWarehousePageContent() {
       return;
     }
 
-    if (!levelBySubject[stockSubject].includes(stockLevel)) {
-      setStockLevel(levelBySubject[stockSubject][0]);
+    if (!getStockLevelOptionsForSubject(stockSubject).includes(stockLevel)) {
+      setStockLevel(getDefaultLevelForInventorySubject(stockSubject));
     }
   }, [stockLevel, stockSubject]);
 
@@ -530,7 +611,7 @@ function AcademicWarehousePageContent() {
   }, [worksheetInventory]);
 
   const stockLevelOptions = useMemo(() => {
-    return stockSubject === 'WRITING' ? ['ZI', 'ZII'] : levelBySubject[stockSubject];
+    return getStockLevelOptionsForSubject(stockSubject);
   }, [stockSubject]);
 
   const stockPeriod = useMemo(() => {
@@ -552,7 +633,7 @@ function AcademicWarehousePageContent() {
     return Array.from(years).sort((a, b) => b - a);
   }, [data?.worksheetBatches, data?.worksheetUsages]);
 
-  const stockRows = useMemo(() => {
+  const stockRowData = useMemo(() => {
     const assignmentBatchById = new Map<number, AcademicWorksheetBatch>(
       (data?.worksheetBatches ?? []).map((batch) => [batch.id, batch])
     );
@@ -594,69 +675,101 @@ function AcademicWarehousePageContent() {
       }
     });
 
-    const assignmentUsedBeforeByCode = new Map<string, number>();
-    const assignmentUsedInPeriodByCode = new Map<string, number>();
+    const buildAssignmentUsageMaps = (subjectFilter: InventorySubject | null) => {
+      const assignmentUsedBeforeByCode = new Map<string, number>();
+      const assignmentUsedInPeriodByCode = new Map<string, number>();
 
-    (data?.worksheetUsages ?? []).forEach((usage) => {
-      const usageDate = toDateInputValue(usage.usedAt);
-      const worksheet = extractWorksheetCodeFromNote(usage.note);
-      if (!worksheet) {
-        return;
-      }
-
-      let normalizedSubject: InventorySubject | null = null;
-      let shouldCount = false;
-
-      if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
-        normalizedSubject = 'WRITING';
-        shouldCount = true;
-      } else if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
-        const batch = assignmentBatchById.get(usage.batchId);
-        if (!batch) {
+      (data?.worksheetUsages ?? []).forEach((usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        const worksheet = extractWorksheetCodeFromNote(usage.note);
+        if (!worksheet) {
           return;
         }
 
-        normalizedSubject = batch.subjectCode;
-        const rangeKey = getWorksheetRangeKey(worksheet, batch.subjectCode);
-        if (!rangeKey) {
+        let normalizedSubject: InventorySubject | null = null;
+        let shouldCount = false;
+
+        if (usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX)) {
+          normalizedSubject = 'WRITING';
           shouldCount = true;
-        } else {
-          const firstUsage = firstRangeAssignmentUsageByKey.get(rangeKey);
-          shouldCount = firstUsage?.usageId === usage.id;
+        } else if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+          const batch = assignmentBatchById.get(usage.batchId);
+          if (!batch) {
+            return;
+          }
+
+          normalizedSubject = batch.subjectCode;
+          const rangeKey = getWorksheetRangeKey(worksheet, batch.subjectCode);
+          if (!rangeKey) {
+            shouldCount = true;
+          } else {
+            const firstUsage = firstRangeAssignmentUsageByKey.get(rangeKey);
+            shouldCount = firstUsage?.usageId === usage.id;
+          }
         }
-      }
 
-      if (!normalizedSubject || normalizedSubject !== stockSubject || !shouldCount) {
-        return;
-      }
-
-      const accumulateToMap = (targetCodeKey: string) => {
-        if (usageDate < stockPeriod.startKey) {
-          assignmentUsedBeforeByCode.set(targetCodeKey, (assignmentUsedBeforeByCode.get(targetCodeKey) ?? 0) + usage.quantity);
-        } else if (usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey) {
-          assignmentUsedInPeriodByCode.set(targetCodeKey, (assignmentUsedInPeriodByCode.get(targetCodeKey) ?? 0) + usage.quantity);
-        }
-      };
-
-      if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
-        const range = getWorksheetRange(worksheet, normalizedSubject as SubjectCode);
-        if (range) {
-          getWorksheetCodesInRange(range).forEach((codeKey) => accumulateToMap(codeKey));
+        if (!normalizedSubject || (subjectFilter !== null && normalizedSubject !== subjectFilter) || !shouldCount) {
           return;
         }
+
+        const accumulateToMap = (targetCodeKey: string) => {
+          if (usageDate < stockPeriod.startKey) {
+            assignmentUsedBeforeByCode.set(targetCodeKey, (assignmentUsedBeforeByCode.get(targetCodeKey) ?? 0) + usage.quantity);
+          } else if (usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey) {
+            assignmentUsedInPeriodByCode.set(targetCodeKey, (assignmentUsedInPeriodByCode.get(targetCodeKey) ?? 0) + usage.quantity);
+          }
+        };
+
+        if (usage.note?.startsWith(WORKSHEET_ASSIGNMENT_NOTE_PREFIX)) {
+          const range = getWorksheetRange(worksheet, normalizedSubject as SubjectCode);
+          if (range) {
+            getWorksheetCodesInRange(range).forEach((codeKey) => accumulateToMap(codeKey));
+            return;
+          }
+        }
+
+        accumulateToMap(normalizeWorksheetCode(worksheet));
+      });
+
+      return { assignmentUsedBeforeByCode, assignmentUsedInPeriodByCode };
+    };
+
+    const subjectAssignmentUsageMaps = buildAssignmentUsageMaps(stockSubject);
+
+    const getStockRowEntriesForLevel = (subject: InventorySubject, level: string) => {
+      if (subject === 'WRITING') {
+        return getWorksheetCodesForInventoryLevel(subject, level).map((worksheetCode) => ({
+          level,
+          worksheetCode,
+        }));
       }
 
-      accumulateToMap(normalizeWorksheetCode(worksheet));
-    });
+      if (level === 'AT' || level === 'DT') {
+        return getWorksheetCodesForInventoryLevel(subject, level).map((worksheetCode) => ({
+          level: worksheetCode,
+          worksheetCode,
+        }));
+      }
 
-    const codeList = isFixedWorksheetCodeLevel(stockLevel)
-      ? [stockLevel]
-      : getWorksheetNumberOptions(stockLevel).map((numberValue) => `${stockLevel}${numberValue}`);
+      if (isFixedWorksheetCodeLevel(level)) {
+        return [{ level, worksheetCode: level }];
+      }
 
-    return codeList.map((worksheetCode) => {
+      return getWorksheetNumberOptions(level).map((numberValue) => ({
+        level,
+        worksheetCode: `${level}${numberValue}`,
+      }));
+    };
+
+    const calculateRow = (
+      subject: InventorySubject,
+      worksheetCode: string,
+      level: string,
+      usageMaps: { assignmentUsedBeforeByCode: Map<string, number>; assignmentUsedInPeriodByCode: Map<string, number> },
+    ) => {
       const matchedBatches = worksheetInventory.filter((batch) => (
-        getInventorySubjectFromBatch(batch) === stockSubject
-        && normalizeWorksheetCode(batch.level) === normalizeWorksheetCode(stockLevel)
+        getInventorySubjectFromBatch(batch) === subject
+        && normalizeWorksheetCode(batch.level) === normalizeWorksheetCode(level)
         && normalizeWorksheetCode(batch.codeRange) === normalizeWorksheetCode(worksheetCode)
       ));
 
@@ -715,8 +828,8 @@ function AcademicWarehousePageContent() {
         .reduce((sum: number, usage: AcademicWorksheetUsage) => sum + usage.quantity, 0);
 
       const normalizedWorksheetCode = normalizeWorksheetCode(worksheetCode);
-      const assignmentUsedBefore = assignmentUsedBeforeByCode.get(normalizedWorksheetCode) ?? 0;
-      const assignmentUsed = assignmentUsedInPeriodByCode.get(normalizedWorksheetCode) ?? 0;
+      const assignmentUsedBefore = usageMaps.assignmentUsedBeforeByCode.get(normalizedWorksheetCode) ?? 0;
+      const assignmentUsed = usageMaps.assignmentUsedInPeriodByCode.get(normalizedWorksheetCode) ?? 0;
 
       // Calculate adjustments (opening & used)
       const openingAdjustBefore = usagesBeforePeriod
@@ -747,7 +860,123 @@ function AcademicWarehousePageContent() {
         closing,
         matchedBatchIds: matchedBatches.map((batch) => batch.id),
       } satisfies StockRow;
+    };
+
+    const calculateBatchRow = (
+      batch: AcademicWorksheetBatch,
+      usageMaps: { assignmentUsedBeforeByCode: Map<string, number>; assignmentUsedInPeriodByCode: Map<string, number> },
+    ) => {
+      const subject = getInventorySubjectFromBatch(batch);
+      const worksheetCode = normalizeWorksheetCode(batch.codeRange);
+      const level = normalizeWorksheetCode(batch.level);
+      const batchUsages = availableUsages.filter((usage: AcademicWorksheetUsage) => usage.batchId === batch.id);
+
+      const openingImported = (() => {
+        const batchDate = toDateInputValue(batch.receivedAt);
+        const isOpeningBalanceAdjust = batch.note?.includes(WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX);
+        return !isOpeningBalanceAdjust && batchDate < stockPeriod.startKey ? batch.quantity : 0;
+      })();
+
+      const importedInPeriod = (() => {
+        const batchDate = toDateInputValue(batch.receivedAt);
+        const isOpeningBalanceAdjust = batch.note?.includes(WORKSHEET_OPENING_BALANCE_ADJUST_PREFIX);
+        return !isOpeningBalanceAdjust && batchDate >= stockPeriod.startKey && batchDate < stockPeriod.nextStartKey ? batch.quantity : 0;
+      })();
+
+      const isGeneratedUsage = (usage: AcademicWorksheetUsage) => (
+        usage.note?.startsWith(WORKSHEET_EXTRA_NOTE_PREFIX)
+        || usage.note?.startsWith(WORKSHEET_LOAN_NOTE_PREFIX)
+        || usage.note?.startsWith(WORKSHEET_RETURN_NOTE_PREFIX)
+      );
+
+      const usagesBeforePeriod = batchUsages.filter((usage) => toDateInputValue(usage.usedAt) < stockPeriod.startKey);
+      const usagesInPeriod = batchUsages.filter((usage) => {
+        const usageDate = toDateInputValue(usage.usedAt);
+        return usageDate >= stockPeriod.startKey && usageDate < stockPeriod.nextStartKey;
+      });
+
+      const isAdjustmentUsage = (usage: AcademicWorksheetUsage) => (
+        usage.note?.startsWith('[WS_OPENING_ADJUST]')
+        || usage.note?.startsWith('[WS_USED_ADJUST]')
+      );
+
+      const generatedBefore = usagesBeforePeriod
+        .filter((usage) => isGeneratedUsage(usage))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const generatedUsageInPeriod = usagesInPeriod
+        .filter((usage) => isGeneratedUsage(usage))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const baseUsedBefore = usagesBeforePeriod
+        .filter((usage) => !isGeneratedUsage(usage) && !isAdjustmentUsage(usage))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const baseUsed = usagesInPeriod
+        .filter((usage) => !isGeneratedUsage(usage) && !isAdjustmentUsage(usage))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const assignmentUsedBefore = usageMaps.assignmentUsedBeforeByCode.get(normalizeWorksheetCode(batch.codeRange)) ?? 0;
+      const assignmentUsed = usageMaps.assignmentUsedInPeriodByCode.get(normalizeWorksheetCode(batch.codeRange)) ?? 0;
+
+      const openingAdjustBefore = usagesBeforePeriod
+        .filter((usage) => usage.note?.startsWith('[WS_OPENING_ADJUST]'))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const openingAdjustInPeriod = usagesInPeriod
+        .filter((usage) => usage.note?.startsWith('[WS_OPENING_ADJUST]'))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const usedAdjustInPeriod = usagesInPeriod
+        .filter((usage) => usage.note?.startsWith('[WS_USED_ADJUST]'))
+        .reduce((sum, usage) => sum + usage.quantity, 0);
+
+      const opening = openingImported - baseUsedBefore - assignmentUsedBefore - generatedBefore + openingAdjustBefore + openingAdjustInPeriod;
+      const used = baseUsed + assignmentUsed + usedAdjustInPeriod;
+      const generated = generatedUsageInPeriod;
+      const closing = opening + importedInPeriod - used - generated;
+
+      return {
+        worksheetCode,
+        opening,
+        imported: importedInPeriod,
+        used,
+        generated,
+        closing,
+        matchedBatchIds: [batch.id],
+      } satisfies StockRow;
+    };
+
+    const summarizeRows = (rows: StockRow[], worksheetCode: string): StockRow => ({
+      worksheetCode,
+      opening: rows.reduce((sum, row) => sum + row.opening, 0),
+      imported: rows.reduce((sum, row) => sum + row.imported, 0),
+      used: rows.reduce((sum, row) => sum + row.used, 0),
+      generated: rows.reduce((sum, row) => sum + row.generated, 0),
+      closing: rows.reduce((sum, row) => sum + row.closing, 0),
+      matchedBatchIds: rows.flatMap((row) => row.matchedBatchIds),
     });
+
+    const currentLevelRows = getStockRowEntriesForLevel(stockSubject, stockLevel).map((entry) => calculateRow(stockSubject, entry.worksheetCode, entry.level, subjectAssignmentUsageMaps));
+
+    // Build per-subject, per-level totals then aggregate them to form the center total.
+    const centerSubjects: InventorySubject[] = ['MATH', 'EFL', 'WRITING'];
+    const centerLevelTotals: StockRow[] = centerSubjects.flatMap((subject) => {
+      const levels = getCenterInventoryLevelsForSubject(subject);
+      const usageMaps = buildAssignmentUsageMaps(subject);
+      return levels.map((level) => {
+        const rowsForLevel = getStockRowEntriesForLevel(subject, level).map((entry) => calculateRow(subject, entry.worksheetCode, entry.level, usageMaps));
+        return summarizeRows(rowsForLevel, `Tổng level ${level}`);
+      });
+    });
+
+    const centerTotal = summarizeRows(centerLevelTotals, 'Tổng tồn toàn trung tâm');
+
+    return {
+      rows: currentLevelRows,
+      levelTotal: summarizeRows(currentLevelRows, `Tổng level ${stockLevel}`),
+      centerTotal,
+    };
   }, [data?.worksheetBatches, data?.worksheetUsages, stockLevel, stockPeriod.nextStartKey, stockPeriod.startKey, stockSubject, worksheetInventory]);
 
   const worksheetAssignmentBatchMap = useMemo(() => {
@@ -772,7 +1001,10 @@ function AcademicWarehousePageContent() {
           studentId: usage.studentId,
           subjectCode: batch.subjectCode,
           date: toDateInputValue(usage.usedAt),
+          usedAt: usage.usedAt,
           worksheet,
+          isWriting: usage.note?.startsWith(WORKSHEET_WRITING_ASSIGNMENT_NOTE_PREFIX) ?? false,
+          isCorrection: usage.note?.startsWith(WORKSHEET_CORRECTION_NOTE_PREFIX) ?? false,
         } satisfies WorksheetAssignmentRow;
       })
       .filter((item): item is WorksheetAssignmentRow => Boolean(item));
@@ -794,22 +1026,26 @@ function AcademicWarehousePageContent() {
 
   const worksheetProgressByTrack = useMemo(() => {
     const map = new Map<string, string>();
-    const maxByTrack = new Map<string, { worksheet: string; number: number; prefix: string }>();
+    const latestByTrack = new Map<string, WorksheetAssignmentRow>();
 
-    worksheetAssignmentRows.forEach((item) => {
-      const parts = getWorksheetParts(item.worksheet);
-      if (!parts) {
-        return;
-      }
+    [...worksheetAssignmentRows]
+      .filter((item) => !item.isWriting && !item.isCorrection)
+      .sort((left, right) => {
+        const usedAtCompare = new Date(right.usedAt).getTime() - new Date(left.usedAt).getTime();
+        if (usedAtCompare !== 0) {
+          return usedAtCompare;
+        }
 
-      const key = `${item.studentId}-${item.subjectCode}`;
-      const current = maxByTrack.get(key);
-      if (!current || parts.number > current.number) {
-        maxByTrack.set(key, { worksheet: item.worksheet, number: parts.number, prefix: parts.prefix });
-      }
-    });
+        return right.id - left.id;
+      })
+      .forEach((item) => {
+        const key = `${item.studentId}-${item.subjectCode}`;
+        if (!latestByTrack.has(key)) {
+          latestByTrack.set(key, item);
+        }
+      });
 
-    maxByTrack.forEach((value, key) => {
+    latestByTrack.forEach((value, key) => {
       map.set(key, value.worksheet);
     });
 
@@ -1679,13 +1915,8 @@ function AcademicWarehousePageContent() {
                             onValueChange={(value) => {
                               const nextSubject = value as InventorySubject;
                               setInventorySubject(nextSubject);
-                              if (nextSubject === 'WRITING') {
-                                setInventoryWorksheetLevel('ZI');
-                                setInventoryWorksheetNumber('1');
-                              } else {
-                                setInventoryWorksheetLevel('A');
-                                setInventoryWorksheetNumber('1');
-                              }
+                              setInventoryWorksheetLevel(getDefaultLevelForInventorySubject(nextSubject));
+                              setInventoryWorksheetNumber('1');
                             }}
                           >
                             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1793,7 +2024,11 @@ function AcademicWarehousePageContent() {
                       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                         <div className="space-y-2">
                           <Label>Môn học</Label>
-                          <Select value={stockSubject} onValueChange={(value) => setStockSubject(value as InventorySubject)}>
+                          <Select value={stockSubject} onValueChange={(value) => {
+                            const nextSubject = value as InventorySubject;
+                            setStockSubject(nextSubject);
+                            setStockLevel(getDefaultLevelForInventorySubject(nextSubject));
+                          }}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="MATH">Toán</SelectItem>
@@ -1853,7 +2088,7 @@ function AcademicWarehousePageContent() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {stockRows.map((row) => (
+                          {stockRowData.rows.map((row) => (
                             <TableRow
                               key={`${stockSubject}-${stockLevel}-${row.worksheetCode}`}
                               className="cursor-pointer hover:bg-slate-50"
@@ -1867,6 +2102,22 @@ function AcademicWarehousePageContent() {
                               <TableCell className={row.closing < 0 ? 'text-red-600 font-semibold' : ''}>{row.closing}</TableCell>
                             </TableRow>
                           ))}
+                          <TableRow className="border-t bg-slate-50 font-semibold">
+                            <TableCell>Worksheet {stockLevel}</TableCell>
+                            <TableCell>{stockRowData.levelTotal.opening}</TableCell>
+                            <TableCell>{stockRowData.levelTotal.imported}</TableCell>
+                            <TableCell>{stockRowData.levelTotal.used}</TableCell>
+                            <TableCell>{stockRowData.levelTotal.generated}</TableCell>
+                            <TableCell>{stockRowData.levelTotal.closing}</TableCell>
+                          </TableRow>
+                          <TableRow className="border-t bg-amber-50 font-semibold">
+                            <TableCell>Tổng worksheet toàn trung tâm</TableCell>
+                            <TableCell>{stockRowData.centerTotal.opening}</TableCell>
+                            <TableCell>{stockRowData.centerTotal.imported}</TableCell>
+                            <TableCell>{stockRowData.centerTotal.used}</TableCell>
+                            <TableCell>{stockRowData.centerTotal.generated}</TableCell>
+                            <TableCell>{stockRowData.centerTotal.closing}</TableCell>
+                          </TableRow>
                         </TableBody>
                       </Table>
                     </CardContent>

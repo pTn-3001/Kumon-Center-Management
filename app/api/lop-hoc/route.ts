@@ -54,6 +54,22 @@ function parseExtraClassGroupId(note: string | null) {
   return Number(matched[0]);
 }
 
+function parseStudyDays(studyDays: string) {
+  const serializedMatches = Array.from(studyDays.matchAll(/(T[2-7])\s*\((Ca\s[1-5])\)/g));
+  if (serializedMatches.length > 0) {
+    return serializedMatches.map((match) => ({
+      weekday: match[1],
+      shiftLabel: match[2],
+    }));
+  }
+
+  return Array.from(new Set((studyDays.match(/T[2-7]/g) ?? []) as Array<'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'T7'>))
+    .map((weekday) => ({
+      weekday,
+      shiftLabel: null as string | null,
+    }));
+}
+
 export async function GET() {
   const [classGroups, students, staff, attendance, allEnrollments, extraSchedules]: [any[], any[], any[], any[], any[], any[]] = await Promise.all([
     prisma.classGroup.findMany({
@@ -122,8 +138,15 @@ export async function GET() {
     const shiftLabel = fromClassShift(group.classShift);
     const dayWithShift = `${weekday}(${shiftLabel})`;
 
-    if (typeof enrollment.studyDays === 'string' && enrollment.studyDays.includes(dayWithShift)) {
-      return true;
+    if (typeof enrollment.studyDays === 'string') {
+      const parsedStudyDays = parseStudyDays(enrollment.studyDays);
+      if (parsedStudyDays.some((item) => item.weekday === weekday && (item.shiftLabel === null || item.shiftLabel === shiftLabel))) {
+        return true;
+      }
+
+      if (enrollment.studyDays.includes(dayWithShift)) {
+        return true;
+      }
     }
 
     return false;
