@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
       classGroupId: toNumber(body.classGroupId),
       studentId: toNumber(body.studentId),
       date: combineDateAndTime(body.date, body.checkInTime),
+      checkOutAt: null,
       status: toAttendanceStatus(body.status),
       makeUpClassGroupId: body.makeUpClassGroupId ? toNumber(body.makeUpClassGroupId) : null,
     },
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     ...created,
     date: created.date.toISOString(),
+    checkOutAt: created.checkOutAt?.toISOString() ?? null,
     createdAt: created.createdAt.toISOString(),
     updatedAt: created.updatedAt.toISOString(),
     status: fromAttendanceStatus(created.status),

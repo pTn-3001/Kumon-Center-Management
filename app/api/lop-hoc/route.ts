@@ -189,6 +189,7 @@ export async function GET() {
     attendance: attendance.map((item: any) => ({
       ...item,
       date: item.date.toISOString(),
+      checkOutAt: item.checkOutAt?.toISOString() ?? null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
       status: item.status === 'ABSENT' ? 'Vắng' : 'Hiện diện',

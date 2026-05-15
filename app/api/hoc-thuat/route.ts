@@ -62,6 +62,7 @@ type AttendanceRow = {
   classGroupId: number;
   studentId: number;
   date: Date;
+  checkOutAt: Date | null;
   status: 'PRESENT' | 'ABSENT';
   makeUpClassGroupId: number | null;
   createdAt: Date;
@@ -168,6 +169,7 @@ export async function GET() {
       subjectCode: fromSubjectCode(item.classGroup.subjectCode),
       studentId: item.studentId,
       date: item.date.toISOString(),
+      checkOutAt: item.checkOutAt?.toISOString() ?? null,
       status: item.status === 'PRESENT' ? 'Hiện diện' : 'Vắng',
       makeUpClassGroupId: item.makeUpClassGroupId,
       createdAt: item.createdAt.toISOString(),

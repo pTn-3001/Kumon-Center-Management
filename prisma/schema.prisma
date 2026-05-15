@@ -352,6 +352,7 @@ model Attendance {
   classGroupId      Int
   studentId         Int
   date              DateTime
+  checkOutAt        DateTime?
   status            AttendanceStatus
   makeUpClassGroupId Int?
   createdAt         DateTime         @default(now())

@@ -85,6 +85,7 @@ type AcademicPayload = {
     subjectCode: SubjectCode;
     studentId: number;
     date: string;
+    checkOutAt: string | null;
     status: 'Hiện diện' | 'Vắng';
     makeUpClassGroupId: number | null;
     createdAt: string;
@@ -388,11 +389,11 @@ function getCenterInventoryLevelsForSubject(subject: InventorySubject) {
 function getWorksheetCodesForInventoryLevel(subject: InventorySubject, level: string) {
   if (subject === 'WRITING') {
     if (level === 'ZI') {
-      return [21, 31, 41, 51, 61, 71, 81, 91].map((numberValue) => `${level}${numberValue}`);
+      return [21, 31, 41, 51, 61, 71, 81, 91, 101, 111, 121, 131, 141, 151, 161, 171, 181, 191].map((numberValue) => `${level}${numberValue}`);
     }
 
     if (level === 'ZII') {
-      return [1, 11, 21, 31, 41, 51, 61, 71, 81, 91].map((numberValue) => `${level}${numberValue}`);
+      return [1, 11, 21, 31, 41, 51, 61, 71, 81, 91, 101, 111, 121, 131, 141, 151, 161, 171, 181, 191].map((numberValue) => `${level}${numberValue}`);
     }
 
     return [];
@@ -2103,7 +2104,7 @@ function AcademicWarehousePageContent() {
                             </TableRow>
                           ))}
                           <TableRow className="border-t bg-slate-50 font-semibold">
-                            <TableCell>Worksheet {stockLevel}</TableCell>
+                            <TableCell>Tổng level {stockLevel}</TableCell>
                             <TableCell>{stockRowData.levelTotal.opening}</TableCell>
                             <TableCell>{stockRowData.levelTotal.imported}</TableCell>
                             <TableCell>{stockRowData.levelTotal.used}</TableCell>
@@ -2111,7 +2112,7 @@ function AcademicWarehousePageContent() {
                             <TableCell>{stockRowData.levelTotal.closing}</TableCell>
                           </TableRow>
                           <TableRow className="border-t bg-amber-50 font-semibold">
-                            <TableCell>Tổng worksheet toàn trung tâm</TableCell>
+                            <TableCell>Tổng tồn toàn trung tâm</TableCell>
                             <TableCell>{stockRowData.centerTotal.opening}</TableCell>
                             <TableCell>{stockRowData.centerTotal.imported}</TableCell>
                             <TableCell>{stockRowData.centerTotal.used}</TableCell>

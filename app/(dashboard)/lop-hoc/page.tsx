@@ -3,10 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BarChart, Bar, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { CheckCircle2, CircleCheckBig, Trash2 } from 'lucide-react';
+import { CheckCircle2, CircleCheckBig, FileOutput, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -54,6 +55,7 @@ type ApiAttendance = {
   classGroupId: number;
   studentId: number;
   date: string;
+  checkOutAt: string | null;
   status: 'Hiện diện' | 'Vắng';
   makeUpClassGroupId: number | null;
   classGroupLabel: string;
@@ -183,6 +185,10 @@ function ShiftChartTooltip({
   );
 }
 
+function toTimeInputValue(value: Date) {
+  return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
+}
+
 function ClassPageContent() {
   const router = useRouter();
   const pathname = usePathname();
@@ -204,6 +210,9 @@ function ClassPageContent() {
   const [extraStudentId, setExtraStudentId] = useState('');
   const [extraStudentDate, setExtraStudentDate] = useState(new Date().toISOString().slice(0, 10));
   const [attendanceHistoryDate, setAttendanceHistoryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [attendanceCheckoutDialogOpen, setAttendanceCheckoutDialogOpen] = useState(false);
+  const [attendanceCheckoutTarget, setAttendanceCheckoutTarget] = useState<ApiAttendance | null>(null);
+  const [attendanceCheckoutTime, setAttendanceCheckoutTime] = useState(() => toTimeInputValue(new Date()));
   const activeTabFromQuery = searchParams.get('tab');
   const currentTab: ClassTab = classTabs.includes(activeTabFromQuery as ClassTab) ? (activeTabFromQuery as ClassTab) : 'quan-ly';
 
@@ -595,6 +604,41 @@ function ClassPageContent() {
     await refreshData();
   }
 
+  function openAttendanceCheckoutDialog(record: ApiAttendance) {
+    const existingTime = record.checkOutAt ? new Date(record.checkOutAt) : new Date();
+    setAttendanceCheckoutTarget(record);
+    setAttendanceCheckoutTime(toTimeInputValue(existingTime));
+    setAttendanceCheckoutDialogOpen(true);
+  }
+
+  function closeAttendanceCheckoutDialog() {
+    setAttendanceCheckoutDialogOpen(false);
+    setAttendanceCheckoutTarget(null);
+  }
+
+  async function submitAttendanceCheckout() {
+    if (!attendanceCheckoutTarget) {
+      return;
+    }
+
+    const [hoursText, minutesText] = attendanceCheckoutTime.split(':');
+    const hours = Number(hoursText);
+    const minutes = Number(minutesText);
+    const checkoutDate = new Date(attendanceCheckoutTarget.date);
+    checkoutDate.setHours(hours, minutes, 0, 0);
+
+    const response = await fetch(`/api/lop-hoc/attendance/${attendanceCheckoutTarget.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checkOutAt: checkoutDate.toISOString() }),
+    });
+
+    if (!response.ok) throw new Error('Không thể điểm danh giờ ra');
+
+    closeAttendanceCheckoutDialog();
+    await refreshData();
+  }
+
   async function addWeeklyExtraStudent() {
     if (!selectedClassGroup || !extraStudentId || !extraStudentDate) {
       return;
@@ -931,6 +975,7 @@ function ClassPageContent() {
                     <TableHead>Học viên</TableHead>
                     <TableHead>Ngày</TableHead>
                     <TableHead>Giờ vào lớp</TableHead>
+                    <TableHead>Giờ ra về</TableHead>
                     <TableHead>Trạng thái</TableHead>
                     <TableHead className="text-right">Hành động</TableHead>
                   </TableRow>
@@ -949,19 +994,27 @@ function ClassPageContent() {
                       <TableCell>{record.studentName}</TableCell>
                       <TableCell>{formatDate(record.date)}</TableCell>
                       <TableCell>{record.status === 'Hiện diện' ? formatTime24(record.date) : '--:--'}</TableCell>
+                      <TableCell>{record.status === 'Hiện diện' ? (record.checkOutAt ? formatTime24(record.checkOutAt) : '--:--') : '--:--'}</TableCell>
                       <TableCell>
                         <Badge variant={record.status === 'Hiện diện' ? 'success' : 'destructive'}>{record.status}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant="destructive" onClick={() => void deleteAttendance(record.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          {record.status === 'Hiện diện' && !record.checkOutAt ? (
+                            <Button size="sm" variant="outline" onClick={() => openAttendanceCheckoutDialog(record)}>
+                              <FileOutput className="mr-2 h-4 w-4" />
+                            </Button>
+                          ) : null}
+                          <Button size="sm" variant="destructive" onClick={() => void deleteAttendance(record.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
                   {filteredAttendanceHistory.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">Không có dữ liệu điểm danh cho ngày đã chọn.</TableCell>
+                      <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">Không có dữ liệu điểm danh cho ngày đã chọn.</TableCell>
                     </TableRow>
                   ) : null}
                 </TableBody>
@@ -970,6 +1023,62 @@ function ClassPageContent() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={attendanceCheckoutDialogOpen} onOpenChange={(open) => {
+        setAttendanceCheckoutDialogOpen(open);
+        if (!open) {
+          setAttendanceCheckoutTarget(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Điểm danh giờ ra về</DialogTitle>
+            <DialogDescription>Kiểm tra lại thông tin và xác nhận giờ ra về của học viên.</DialogDescription>
+          </DialogHeader>
+
+          {attendanceCheckoutTarget ? (
+            <div className="space-y-4 py-2">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Học viên</Label>
+                  <Input value={attendanceCheckoutTarget.studentName} disabled />
+                </div>
+                <div className="space-y-2">
+                  <Label>Ngày</Label>
+                  <Input value={formatDate(attendanceCheckoutTarget.date)} disabled />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Lớp</Label>
+                <Input
+                  value={(() => {
+                    const group = classGroupById.get(attendanceCheckoutTarget.classGroupId);
+                    if (!group) return attendanceCheckoutTarget.classGroupLabel;
+                    const shiftLabel = formatClassShiftByWeekday(group.weekday, group.classShift as ClassShift);
+                    return group.label.includes(shiftLabel) ? group.label : `${group.label} - ${shiftLabel}`;
+                  })()}
+                  disabled
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Giờ ra</Label>
+                <Input type="time" value={attendanceCheckoutTime} onChange={(event) => setAttendanceCheckoutTime(event.target.value)} />
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeAttendanceCheckoutDialog}>
+              Hủy
+            </Button>
+            <Button type="button" onClick={() => void submitAttendanceCheckout()}>
+              Xác nhận
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

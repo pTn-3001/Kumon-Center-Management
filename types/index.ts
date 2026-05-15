@@ -124,6 +124,7 @@ export interface Attendance {
   classGroupId: number;
   studentId: number;
   date: string;
+  checkOutAt?: string | null;
   status: AttendanceStatus;
   makeUpClassGroupId?: number | null;
 }
