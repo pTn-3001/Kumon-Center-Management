@@ -8,6 +8,7 @@ import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleD
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { HoverTooltip } from '@/components/ui/hover-tooltip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MetricCard } from '@/components/dashboard/metric-card';
-import { cn, formatCurrency, formatDate } from '@/lib/utils';
+import { cn, formatCurrency, formatDate, formatNumberWithDots } from '@/lib/utils';
 import { formatClassShiftByWeekday } from '@/lib/kumon';
 import type { ClassShift, Gender, StudentStatus, SubjectCode, Weekday } from '@/types';
 
@@ -349,6 +350,9 @@ function StudentsPageContent() {
   const [officialAdmissionSubjects, setOfficialAdmissionSubjects] = useState<SubjectCode[]>([]);
   const [savingOfficialAdmission, setSavingOfficialAdmission] = useState(false);
   const [tuitionDialogOpen, setTuitionDialogOpen] = useState(false);
+  const [tuitionDiscount50, setTuitionDiscount50] = useState(false);
+  const [tuitionFree, setTuitionFree] = useState(false);
+  const [tuitionCustomAmount, setTuitionCustomAmount] = useState<string>('');
   const [tuitionStudent, setTuitionStudent] = useState<ApiStudent | null>(null);
   const [selectedPaymentMonths, setSelectedPaymentMonths] = useState<string[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Tiền mặt');
@@ -737,7 +741,7 @@ function StudentsPageContent() {
   }, [financeItems, parseTuitionFinanceItem]);
 
   const tuitionPaymentDetailsMap = useMemo(() => {
-    const map = new Map<string, { paymentDate: string; paymentMethod: string }>();
+    const map = new Map<string, { paymentDate: string; paymentMethod: string; amount: number }>();
     financeItems.forEach((item) => {
       const parsed = parseTuitionFinanceItem(item);
       if (!parsed) {
@@ -747,6 +751,7 @@ function StudentsPageContent() {
       map.set(`${parsed.studentId}-${parsed.month}`, {
         paymentDate: item.spentAt.slice(0, 10),
         paymentMethod: parsed.method,
+        amount: item.amount,
       });
     });
     return map;
@@ -779,6 +784,7 @@ function StudentsPageContent() {
           subjectCount,
           estimatedAmount,
           paid,
+          paidAmount: paymentDetails?.amount ?? 0,
           paymentDate: paymentDetails?.paymentDate ?? null,
           paymentMethod: paymentDetails?.paymentMethod ?? null,
         };
@@ -798,7 +804,7 @@ function StudentsPageContent() {
   const tuitionPaidTotal = useMemo(() => {
     return tuitionRows
       .filter((row) => row.paid)
-      .reduce((total, row) => total + row.estimatedAmount, 0);
+      .reduce((total, row) => total + row.paidAmount, 0);
   }, [tuitionRows]);
 
   const admissionFeeTotal = useMemo(() => {
@@ -827,6 +833,16 @@ function StudentsPageContent() {
       0,
     );
   }, [selectedPaymentMonths, tuitionStudent]);
+
+  useEffect(() => {
+    let finalAmount = tuitionDialogAmount;
+    if (tuitionFree) {
+      finalAmount = 0;
+    } else if (tuitionDiscount50) {
+      finalAmount = finalAmount / 2;
+    }
+    setTuitionCustomAmount(finalAmount.toString());
+  }, [tuitionDialogAmount, tuitionDiscount50, tuitionFree]);
 
   async function refreshStudents() {
     const response = await fetch('/api/hoc-vien', { cache: 'no-store' });
@@ -997,6 +1013,13 @@ function StudentsPageContent() {
     setSelectedPaymentMonths([tuitionMonthFilter]);
     setPaymentMethod('Tiền mặt');
     setPaymentDate(TODAY_ISO);
+    setTuitionDiscount50(false);
+    setTuitionFree(false);
+    
+    const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
+    const amount = calculateStudentTuitionForMonth(student, tuitionMonthFilter, activeEnrollments);
+    setTuitionCustomAmount(amount.toString());
+    
     setTuitionDialogOpen(true);
   }
 
@@ -1010,20 +1033,27 @@ function StudentsPageContent() {
       const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
       const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
 
-      const requests = selectedPaymentMonths.map((monthKey) =>
-        fetch('/api/tai-chinh', {
+      const parsedCustomAmount = Number(String(tuitionCustomAmount).replace(/\\D/g, ''));
+      const amountPerMonth = Math.round(parsedCustomAmount / selectedPaymentMonths.length);
+
+      const requests = selectedPaymentMonths.map((monthKey, index) => {
+        const thisMonthAmount = index === selectedPaymentMonths.length - 1 
+          ? parsedCustomAmount - amountPerMonth * (selectedPaymentMonths.length - 1)
+          : amountPerMonth;
+
+        return fetch('/api/tai-chinh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'Khác',
-            amount: calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
+            amount: thisMonthAmount,
             spentAt: paymentDate,
             note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
             proofImage: null,
             skipNotification: true,
           }),
-        })
-      );
+        });
+      });
 
       const responses = await Promise.all(requests);
       if (responses.some((response) => !response.ok)) {
@@ -1035,10 +1065,7 @@ function StudentsPageContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           months: selectedPaymentMonths,
-          totalAmount: selectedPaymentMonths.reduce(
-            (total, monthKey) => total + calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
-            0,
-          ),
+          totalAmount: parsedCustomAmount,
         }),
       });
 
@@ -1050,6 +1077,9 @@ function StudentsPageContent() {
       setTuitionDialogOpen(false);
       setTuitionStudent(null);
       setSelectedPaymentMonths([]);
+      setTuitionDiscount50(false);
+      setTuitionFree(false);
+      setTuitionCustomAmount('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi khi đóng học phí');
     }
@@ -2026,7 +2056,8 @@ function StudentsPageContent() {
                       <TableRow>
                         <TableHead>Học viên</TableHead>
                         <TableHead>Số môn</TableHead>
-                        <TableHead>Học phí/tháng</TableHead>
+                        <TableHead>Học phí gốc</TableHead>
+                        <TableHead>Đã thu</TableHead>
                         <TableHead>Trạng thái</TableHead>
                         <TableHead>Ngày thu</TableHead>
                         <TableHead>Hình thức</TableHead>
@@ -2039,6 +2070,18 @@ function StudentsPageContent() {
                           <TableCell className="font-medium">{row.student.fullName}</TableCell>
                           <TableCell>{row.subjectCount}</TableCell>
                           <TableCell>{formatCurrency(row.estimatedAmount)}</TableCell>
+                          <TableCell>
+                            {row.paid ? (
+                              <div className="relative inline-flex flex-col items-center justify-center whitespace-nowrap">
+                                <span>{formatCurrency(row.paidAmount)}</span>
+                                {row.paidAmount !== row.estimatedAmount && row.estimatedAmount > 0 ? (
+                                  <Badge className="absolute -right-8 -top-3 scale-[0.65] transform px-1 py-0 font-bold shadow-none" variant={row.paidAmount < row.estimatedAmount ? "destructive" : "warning"}>
+                                    {row.paidAmount < row.estimatedAmount ? '-' : '+'}{Math.abs(Math.round((row.estimatedAmount - row.paidAmount) / row.estimatedAmount * 100))}%
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            ) : '-'}
+                          </TableCell>
                           <TableCell>
                             <Badge variant={row.paid ? 'success' : 'warning'}>{row.paid ? 'Đã đóng' : 'Chưa đóng'}</Badge>
                           </TableCell>
@@ -2156,13 +2199,13 @@ function StudentsPageContent() {
         : null}
 
       <Dialog open={tuitionDialogOpen} onOpenChange={setTuitionDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>Đóng học phí</DialogTitle>
             <DialogDescription>{tuitionStudent ? `Học viên: ${tuitionStudent.fullName}` : ''}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto pr-1">
             <div className="space-y-2">
               <Label>Họ tên học viên</Label>
               <Input value={tuitionStudent?.fullName ?? ''} disabled />
@@ -2204,8 +2247,35 @@ function StudentsPageContent() {
               </Select>
             </div>
 
-            <div className="rounded-xl border bg-muted/20 p-3 text-sm">
-              Số tiền tự tính: <span className="font-semibold">{formatCurrency(tuitionDialogAmount)}</span>
+            <div className="space-y-3 rounded-xl border bg-muted/20 p-3 text-sm">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="tuitionDiscount50"
+                  className="h-4 w-4 cursor-pointer"
+                  checked={tuitionDiscount50}
+                  onChange={(e) => setTuitionDiscount50(e.target.checked)}
+                />
+                <Label htmlFor="tuitionDiscount50" className="font-medium text-emerald-600 cursor-pointer">Khuyến mãi 50%</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="tuitionFree"
+                  className="h-4 w-4 cursor-pointer"
+                  checked={tuitionFree}
+                  onChange={(e) => setTuitionFree(e.target.checked)}
+                />
+                <Label htmlFor="tuitionFree" className="font-medium text-blue-600 cursor-pointer">Miễn học phí</Label>
+              </div>
+              <div className="space-y-1 mt-2">
+                <Label>Phí thu (Gốc: {formatCurrency(tuitionDialogAmount)})</Label>
+                <Input
+                  value={formatNumberWithDots(tuitionCustomAmount)}
+                  onChange={(e) => setTuitionCustomAmount(e.target.value.replace(/\\D/g, ''))}
+                  placeholder="Nhập số tiền..."
+                />
+              </div>
             </div>
           </div>
 
