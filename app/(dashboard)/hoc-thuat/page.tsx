@@ -1228,10 +1228,6 @@ function AcademicWarehousePageContent() {
       throw new Error('Không thể lưu worksheet batch');
     }
 
-    setBatchForm(emptyBatchForm);
-    setInventorySubject('MATH');
-    setInventoryWorksheetLevel('A');
-    setInventoryWorksheetNumber('1');
     setEditingBatchId(null);
     await refreshData();
   }

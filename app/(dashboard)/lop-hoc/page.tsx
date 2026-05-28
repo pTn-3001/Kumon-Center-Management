@@ -477,6 +477,16 @@ function ClassPageContent() {
     setAttendanceStudentId(String(matchedStudent.id));
   }, [selectedClassStudents, selectedStudentFromQuery]);
 
+  const filteredClassStudentsForAttendance = useMemo(() => {
+    if (!selectedClassGroup) return selectedClassStudents;
+    const attendedStudentIds = new Set(
+      data.attendance
+        .filter((record) => record.date.slice(0, 10) === attendanceDate && record.classGroupId === selectedClassGroup.id)
+        .map((record) => record.studentId)
+    );
+    return selectedClassStudents.filter((student) => !attendedStudentIds.has(student.id));
+  }, [selectedClassStudents, data.attendance, attendanceDate, selectedClassGroup]);
+
   const statusData = useMemo(() => {
     const counts = selectedClassStudents.reduce<Record<string, number>>((acc, student) => {
       const label = formatStudentStatusLabel(student.status);
@@ -588,7 +598,9 @@ function ClassPageContent() {
     });
 
     if (!response.ok) throw new Error('Không thể lưu điểm danh');
+    // Tránh reset `attendanceDate` (ngày điểm danh) để tiện điểm danh liên tục cho cùng một ngày
     setAttendanceStudentId('');
+    setAttendanceStatus('Hiện diện');
     setAttendanceCheckInTime(() => {
       const now = new Date();
       return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -865,7 +877,7 @@ function ClassPageContent() {
                           <SelectValue placeholder="Chọn học viên" />
                         </SelectTrigger>
                         <SelectContent>
-                          {selectedClassStudents.map((student) => (
+                          {filteredClassStudentsForAttendance.map((student) => (
                             <SelectItem key={student.id} value={String(student.id)}>
                               {student.fullName}
                               {student.status === 'Học bù' ? ' (Học bù)' : ''}
