@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { DEFAULT_CENTER_ID, ensureDefaultCenter, getVisibleStaffWhere, toNumber } from '@/lib/api-helpers';
+import { DEFAULT_CENTER_ID, ensureDefaultCenter, getVisibleStaffWhere, parseDateInput, toNumber } from '@/lib/api-helpers';
 
 export const runtime = 'nodejs';
 const EXTRA_CLASS_NOTE_PREFIX = '[EXTRA_CLASS]';
@@ -70,7 +70,29 @@ function parseStudyDays(studyDays: string) {
     }));
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const dateParam = searchParams.get('date');
+  const monthParam = searchParams.get('month');
+
+  const attendanceWhere: any = {};
+
+  if (dateParam) {
+    const [year, month, day] = dateParam.split('-').map(Number);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
+      const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
+      attendanceWhere.date = { gte: startOfDay, lte: endOfDay };
+    }
+  } else if (monthParam) {
+    const [year, month] = monthParam.split('-').map(Number);
+    if (!isNaN(year) && !isNaN(month)) {
+      const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+      attendanceWhere.date = { gte: startOfMonth, lte: endOfMonth };
+    }
+  }
+
   const [classGroups, students, staff, attendance, allEnrollments, extraSchedules]: [any[], any[], any[], any[], any[], any[]] = await Promise.all([
     prisma.classGroup.findMany({
       where: { centerId: DEFAULT_CENTER_ID },
@@ -98,8 +120,8 @@ export async function GET() {
       },
     }),
     prisma.attendance.findMany({
+      where: attendanceWhere,
       orderBy: { date: 'desc' },
-      take: 100,
       include: {
         classGroup: { select: { id: true, label: true } },
         student: { select: { id: true, fullName: true } },
@@ -126,7 +148,6 @@ export async function GET() {
       include: {
         student: { select: { id: true, fullName: true, status: true } },
       },
-      take: 200,
     }),
   ]);
 

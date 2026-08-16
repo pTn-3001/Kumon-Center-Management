@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { BarChart, Bar, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { CheckCircle2, CircleCheckBig, FileOutput, Trash2 } from 'lucide-react';
@@ -144,6 +144,16 @@ function getDateForWeekdayInCurrentWeek(weekday: Weekday) {
   return date.toISOString().slice(0, 10);
 }
 
+function toLocalDateString(isoDateStr: string): string {
+  if (!isoDateStr) return '';
+  const d = new Date(isoDateStr);
+  if (isNaN(d.getTime())) return isoDateStr.slice(0, 10);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function toWeekdayFromDate(value: string) {
   const day = new Date(value).getDay();
   const map: Record<number, Weekday | null> = {
@@ -203,6 +213,19 @@ function ClassPageContent() {
     const now = new Date();
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   });
+  const [isCustomCheckInTime, setIsCustomCheckInTime] = useState(false);
+
+  useEffect(() => {
+    if (isCustomCheckInTime) return;
+    const updateRealtimeCheckIn = () => {
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      setAttendanceCheckInTime((prev) => (prev === timeStr ? prev : timeStr));
+    };
+    updateRealtimeCheckIn();
+    const timer = setInterval(updateRealtimeCheckIn, 1000);
+    return () => clearInterval(timer);
+  }, [isCustomCheckInTime]);
   const [attendanceStudentId, setAttendanceStudentId] = useState('');
   const [attendanceStatus, setAttendanceStatus] = useState<'Hiện diện' | 'Vắng'>('Hiện diện');
   const [makeUpClassKey, setMakeUpClassKey] = useState('none');
@@ -230,25 +253,41 @@ function ClassPageContent() {
     return map[day] ?? 'T2';
   }, []);
 
+  const activeFetchDate = currentTab === 'lich-su' ? attendanceHistoryDate : attendanceDate;
+
+  const fetchClassData = useCallback(async (targetDate: string) => {
+    const response = await fetch(`/api/lop-hoc?date=${targetDate}`, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('Không thể tải dữ liệu lớp học');
+    }
+    return (await response.json()) as ClassPayload;
+  }, []);
+
   useEffect(() => {
+    let isCancelled = false;
     const loadData = async () => {
       try {
-        const response = await fetch('/api/lop-hoc', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error('Không thể tải dữ liệu lớp học');
+        const payload = await fetchClassData(activeFetchDate);
+        if (!isCancelled) {
+          setData(payload);
+          setSelectedClass((prev) => prev || { subjectCode: 'MATH', weekday: defaultMathWeekday });
         }
-        const payload = (await response.json()) as ClassPayload;
-        setData(payload);
-        setSelectedClass({ subjectCode: 'MATH', weekday: defaultMathWeekday });
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        if (!isCancelled) {
+          setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        }
       } finally {
-        setLoading(false);
+        if (!isCancelled) {
+          setLoading(false);
+        }
       }
     };
 
     void loadData();
-  }, [defaultMathWeekday]);
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeFetchDate, defaultMathWeekday, fetchClassData]);
 
   useEffect(() => {
     if (!selectedClass) {
@@ -481,7 +520,7 @@ function ClassPageContent() {
     if (!selectedClassGroup) return selectedClassStudents;
     const attendedStudentIds = new Set(
       data.attendance
-        .filter((record) => record.date.slice(0, 10) === attendanceDate && record.classGroupId === selectedClassGroup.id)
+        .filter((record) => toLocalDateString(record.date) === attendanceDate && record.classGroupId === selectedClassGroup.id)
         .map((record) => record.studentId)
     );
     return selectedClassStudents.filter((student) => !attendedStudentIds.has(student.id));
@@ -539,13 +578,12 @@ function ClassPageContent() {
   }, [data.students, selectedClassStudents]);
 
   const filteredAttendanceHistory = useMemo(() => {
-    return data.attendance.filter((record) => record.date.slice(0, 10) === attendanceHistoryDate);
+    return data.attendance.filter((record) => toLocalDateString(record.date) === attendanceHistoryDate);
   }, [attendanceHistoryDate, data.attendance]);
 
   async function refreshData() {
-    const response = await fetch('/api/lop-hoc', { cache: 'no-store' });
-    if (!response.ok) throw new Error('Không thể tải dữ liệu lớp học');
-    setData((await response.json()) as ClassPayload);
+    const payload = await fetchClassData(activeFetchDate);
+    setData(payload);
   }
 
   async function submitAttendance() {
@@ -601,6 +639,7 @@ function ClassPageContent() {
     // Tránh reset `attendanceDate` (ngày điểm danh) để tiện điểm danh liên tục cho cùng một ngày
     setAttendanceStudentId('');
     setAttendanceStatus('Hiện diện');
+    setIsCustomCheckInTime(false);
     setAttendanceCheckInTime(() => {
       const now = new Date();
       return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -916,7 +955,7 @@ function ClassPageContent() {
                       {attendanceStatus === 'Hiện diện' ? (
                         <div className="space-y-2">
                           <Label>Giờ vào học</Label>
-                          <Input type="time" value={attendanceCheckInTime} onChange={(e) => setAttendanceCheckInTime(e.target.value)} />
+                          <Input type="time" value={attendanceCheckInTime} onChange={(e) => { setAttendanceCheckInTime(e.target.value); setIsCustomCheckInTime(true); }} />
                         </div>
                       ) : null}
                       {attendanceStatus === 'Vắng' ? (

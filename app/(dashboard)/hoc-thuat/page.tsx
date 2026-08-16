@@ -521,11 +521,20 @@ function AcademicWarehousePageContent() {
     [data, selectedStudentId]
   );
 
+  const selectedMonthKey = useMemo(
+    () => `${selectedCalendarMonth.getFullYear()}-${String(selectedCalendarMonth.getMonth() + 1).padStart(2, '0')}`,
+    [selectedCalendarMonth]
+  );
+
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const response = await fetch('/api/hoc-thuat', { cache: 'no-store' });
+        const queryParams = new URLSearchParams();
+        if (selectedStudentId) queryParams.set('studentId', String(selectedStudentId));
+        if (selectedMonthKey) queryParams.set('month', selectedMonthKey);
+
+        const response = await fetch(`/api/hoc-thuat?${queryParams.toString()}`, { cache: 'no-store' });
         if (!response.ok) {
           throw new Error('Không thể tải dữ liệu học thuật');
         }
@@ -536,7 +545,6 @@ function AcademicWarehousePageContent() {
         if (payload.students.length > 0) {
           setSelectedStudentId((current) => current || payload.students[0].id);
         }
-
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
       } finally {
@@ -545,7 +553,7 @@ function AcademicWarehousePageContent() {
     };
 
     void loadData();
-  }, []);
+  }, [selectedStudentId, selectedMonthKey]);
 
   useEffect(() => {
     if (!data || selectedStudentId) {
@@ -1150,7 +1158,11 @@ function AcademicWarehousePageContent() {
   );
 
   async function refreshData() {
-    const response = await fetch('/api/hoc-thuat', { cache: 'no-store' });
+    const queryParams = new URLSearchParams();
+    if (selectedStudentId) queryParams.set('studentId', String(selectedStudentId));
+    if (selectedMonthKey) queryParams.set('month', selectedMonthKey);
+
+    const response = await fetch(`/api/hoc-thuat?${queryParams.toString()}`, { cache: 'no-store' });
     if (!response.ok) {
       throw new Error('Không thể tải dữ liệu học thuật');
     }

@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { toNumber } from '@/lib/api-helpers';
 import { DEFAULT_CENTER_ID } from './_helpers';
 
 export const runtime = 'nodejs';
@@ -80,7 +81,35 @@ function fromSubjectCode(value: string) {
   return value === 'EFL' ? 'EFL' : 'MATH';
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+  const studentIdParam = searchParams.get('studentId');
+  const monthParam = searchParams.get('month');
+
+  const studentId = studentIdParam ? toNumber(studentIdParam) : null;
+
+  const attendanceWhere: any = {
+    classGroup: { centerId: DEFAULT_CENTER_ID },
+  };
+  const scheduleWhere: any = {
+    centerId: DEFAULT_CENTER_ID,
+  };
+
+  if (studentId) {
+    attendanceWhere.studentId = studentId;
+    scheduleWhere.studentId = studentId;
+  }
+
+  if (monthParam) {
+    const [year, month] = monthParam.split('-').map(Number);
+    if (!isNaN(year) && !isNaN(month)) {
+      const startOfMonth = new Date(year, month - 1, 1, 0, 0, 0, 0);
+      const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
+      attendanceWhere.date = { gte: startOfMonth, lte: endOfMonth };
+      scheduleWhere.scheduledAt = { gte: startOfMonth, lte: endOfMonth };
+    }
+  }
+
   const [students, assessments, worksheetBatches, worksheetUsages, personalSchedules, attendances] = await Promise.all([
     prisma.student.findMany({
       where: { centerId: DEFAULT_CENTER_ID },
@@ -104,11 +133,10 @@ export async function GET() {
     prisma.assessmentRecord.findMany({ orderBy: { testDate: 'desc' }, take: 100 }),
     prisma.worksheetBatch.findMany({ where: { centerId: DEFAULT_CENTER_ID }, orderBy: { receivedAt: 'desc' } }),
     prisma.worksheetUsage.findMany({ where: { batch: { centerId: DEFAULT_CENTER_ID } }, orderBy: { usedAt: 'desc' } }),
-    prisma.personalSchedule.findMany({ where: { centerId: DEFAULT_CENTER_ID }, orderBy: { scheduledAt: 'desc' }, take: 100 }),
+    prisma.personalSchedule.findMany({ where: scheduleWhere, orderBy: { scheduledAt: 'desc' } }),
     prisma.attendance.findMany({
-      where: { classGroup: { centerId: DEFAULT_CENTER_ID } },
+      where: attendanceWhere,
       orderBy: { date: 'desc' },
-      take: 400,
       include: { classGroup: { select: { id: true, label: true, subjectCode: true } } },
     }),
   ]);

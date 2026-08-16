@@ -21,7 +21,10 @@ type StudentRow = {
 export async function GET() {
   const students: StudentRow[] = await prisma.student.findMany({
     where: {
-      status: { in: ['OFFICIAL', 'TRIAL'] },
+      OR: [
+        { status: { in: ['OFFICIAL', 'TRIAL'] } },
+        { enrollments: { some: { endDate: null } } },
+      ],
     },
     orderBy: { fullName: 'asc' },
     include: {

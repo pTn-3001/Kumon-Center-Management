@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { addYears, differenceInCalendarDays, parseISO, startOfDay } from 'date-fns';
 import { useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign, Save, FolderPlus, GraduationCap, History } from 'lucide-react';
+import { CalendarDays, Edit3, PhoneCall, Search, PlusCircle, ShieldX, X, CircleDollarSign, Save, FolderPlus, GraduationCap, History, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,7 +85,7 @@ type ApiLeadPrefill = {
 
 type StudentTab = 'hoc-vien' | 'hoc-thu' | 'nghi-hoc' | 'sinh-nhat' | 'chua-thu-hoc-phi' | 'nhap-hoc';
 type BirthdayFilter = 'all' | '7-days' | 'after-7-days' | 'passed';
-type TrialStatusFilter = typeof STATUS_TRIAL | typeof STATUS_EXPIRED;
+type TrialStatusFilter = 'all' | typeof STATUS_TRIAL | typeof STATUS_EXPIRED;
 type TuitionStatusFilter = 'all' | 'unpaid' | 'paid';
 type AdmissionRegistrationType = 'Chinh thuc' | 'Hoc thu';
 type IntakeSource = 'transfer' | 'new';
@@ -212,6 +212,20 @@ function toMonthKey(dateValue: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function computeSpentAtForMonth(paymentDateStr: string, monthKey: string): string {
+  const [payYearStr, payMonthStr, payDayStr] = paymentDateStr.split('-');
+  const payDay = Number(payDayStr) || 1;
+
+  const [targetYear, targetMonth] = monthKey.split('-').map(Number);
+  const maxDays = new Date(targetYear, targetMonth, 0).getDate();
+  const day = Math.min(payDay, maxDays);
+
+  const formattedMonth = String(targetMonth).padStart(2, '0');
+  const formattedDay = String(day).padStart(2, '0');
+
+  return `${targetYear}-${formattedMonth}-${formattedDay}`;
+}
+
 function isBeforeMonth(monthKey: string, pivotMonthKey: string) {
   return monthKey.localeCompare(pivotMonthKey) < 0;
 }
@@ -278,7 +292,7 @@ function StudentsPageContent() {
   const [error, setError] = useState('');
 
   const [search, setSearch] = useState('');
-  const [trialStatusFilter, setTrialStatusFilter] = useState<TrialStatusFilter>(STATUS_TRIAL);
+  const [trialStatusFilter, setTrialStatusFilter] = useState<TrialStatusFilter>('all');
   const [tuitionStatusFilter, setTuitionStatusFilter] = useState<TuitionStatusFilter>('all');
   const [reportBMonthFilter, setReportBMonthFilter] = useState<string>('all');
   const [reportBYearFilter, setReportBYearFilter] = useState<string>('all');
@@ -350,6 +364,13 @@ function StudentsPageContent() {
   const [officialAdmissionSubjects, setOfficialAdmissionSubjects] = useState<SubjectCode[]>([]);
   const [savingOfficialAdmission, setSavingOfficialAdmission] = useState(false);
   const [tuitionDialogOpen, setTuitionDialogOpen] = useState(false);
+  const [tuitionStep, setTuitionStep] = useState<'form' | 'confirm'>('form');
+  const [revertConfirmDialogOpen, setRevertConfirmDialogOpen] = useState(false);
+  const [revertTargetRow, setRevertTargetRow] = useState<(typeof tuitionRows)[number] | null>(null);
+  const [savingTuitionPayment, setSavingTuitionPayment] = useState(false);
+  const [savingRevertTuition, setSavingRevertTuition] = useState(false);
+  const [admissionConfirmDialogOpen, setAdmissionConfirmDialogOpen] = useState(false);
+  const [savingAdmission, setSavingAdmission] = useState(false);
   const [tuitionDiscount50, setTuitionDiscount50] = useState(false);
   const [tuitionFree, setTuitionFree] = useState(false);
   const [tuitionCustomAmount, setTuitionCustomAmount] = useState<string>('');
@@ -544,7 +565,7 @@ function StudentsPageContent() {
 
   const filteredTrialStudents = useMemo(
     () => trialStudents.filter((s) => {
-      const statusOk = s.status === trialStatusFilter;
+      const statusOk = trialStatusFilter === 'all' || s.status === trialStatusFilter;
       return matchesSearch(s) && statusOk;
     }),
     [trialStudents, matchesSearch, trialStatusFilter]
@@ -741,7 +762,7 @@ function StudentsPageContent() {
   }, [financeItems, parseTuitionFinanceItem]);
 
   const tuitionPaymentDetailsMap = useMemo(() => {
-    const map = new Map<string, { paymentDate: string; paymentMethod: string; amount: number }>();
+    const map = new Map<string, { financeItemId: number; paymentDate: string; paymentMethod: string; amount: number }>();
     financeItems.forEach((item) => {
       const parsed = parseTuitionFinanceItem(item);
       if (!parsed) {
@@ -749,6 +770,7 @@ function StudentsPageContent() {
       }
 
       map.set(`${parsed.studentId}-${parsed.month}`, {
+        financeItemId: item.id,
         paymentDate: item.spentAt.slice(0, 10),
         paymentMethod: parsed.method,
         amount: item.amount,
@@ -784,6 +806,7 @@ function StudentsPageContent() {
           subjectCount,
           estimatedAmount,
           paid,
+          financeItemId: paymentDetails?.financeItemId ?? null,
           paidAmount: paymentDetails?.amount ?? 0,
           paymentDate: paymentDetails?.paymentDate ?? null,
           paymentMethod: paymentDetails?.paymentMethod ?? null,
@@ -1019,8 +1042,22 @@ function StudentsPageContent() {
     const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
     const amount = calculateStudentTuitionForMonth(student, tuitionMonthFilter, activeEnrollments);
     setTuitionCustomAmount(amount.toString());
-    
+    setTuitionStep('form');
     setTuitionDialogOpen(true);
+  }
+
+  function handleOpenTuitionConfirm() {
+    if (!tuitionStudent || selectedPaymentMonths.length === 0) {
+      setError('Vui lòng chọn ít nhất 1 tháng cần thu học phí');
+      return;
+    }
+    const parsedAmount = Number(String(tuitionCustomAmount).replace(/\D/g, ''));
+    if (isNaN(parsedAmount) || parsedAmount < 0) {
+      setError('Số tiền đóng học phí không hợp lệ');
+      return;
+    }
+    setError('');
+    setTuitionStep('confirm');
   }
 
   async function submitTuitionPayment() {
@@ -1029,11 +1066,12 @@ function StudentsPageContent() {
       return;
     }
 
+    setSavingTuitionPayment(true);
     try {
       const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
       const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
 
-      const parsedCustomAmount = Number(String(tuitionCustomAmount).replace(/\\D/g, ''));
+      const parsedCustomAmount = Number(String(tuitionCustomAmount).replace(/\D/g, ''));
       const amountPerMonth = Math.round(parsedCustomAmount / selectedPaymentMonths.length);
 
       const requests = selectedPaymentMonths.map((monthKey, index) => {
@@ -1041,13 +1079,15 @@ function StudentsPageContent() {
           ? parsedCustomAmount - amountPerMonth * (selectedPaymentMonths.length - 1)
           : amountPerMonth;
 
+        const spentAtForMonth = computeSpentAtForMonth(paymentDate, monthKey);
+
         return fetch('/api/tai-chinh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'Khác',
             amount: thisMonthAmount,
-            spentAt: paymentDate,
+            spentAt: spentAtForMonth,
             note: `${TUITION_NOTE_PREFIX} studentId=${tuitionStudent.id};month=${monthKey};method=${paymentMethod};subjects=${subjectCount}`,
             proofImage: null,
             skipNotification: true,
@@ -1075,6 +1115,7 @@ function StudentsPageContent() {
 
       await refreshFinanceItems();
       setTuitionDialogOpen(false);
+      setTuitionStep('form');
       setTuitionStudent(null);
       setSelectedPaymentMonths([]);
       setTuitionDiscount50(false);
@@ -1082,6 +1123,42 @@ function StudentsPageContent() {
       setTuitionCustomAmount('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi khi đóng học phí');
+    } finally {
+      setSavingTuitionPayment(false);
+    }
+  }
+
+  function handleOpenRevertConfirm(row: (typeof tuitionRows)[number]) {
+    if (!row.financeItemId) {
+      return;
+    }
+    setRevertTargetRow(row);
+    setRevertConfirmDialogOpen(true);
+  }
+
+  async function confirmRevertTuition() {
+    if (!revertTargetRow?.financeItemId) {
+      return;
+    }
+
+    setSavingRevertTuition(true);
+    try {
+      const response = await fetch(`/api/tai-chinh/${revertTargetRow.financeItemId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Không thể hoàn tác đóng học phí');
+      }
+
+      await refreshFinanceItems();
+      await refreshStudents();
+      setRevertConfirmDialogOpen(false);
+      setRevertTargetRow(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi khi hoàn tác đóng học phí');
+    } finally {
+      setSavingRevertTuition(false);
     }
   }
 
@@ -1396,7 +1473,35 @@ function StudentsPageContent() {
     }
   }
 
+  function handleOpenAdmissionConfirm() {
+    try {
+      if (!form.fullName.trim()) {
+        throw new Error('Vui lòng nhập họ tên học viên');
+      }
+
+      if (selectedSubjects.length === 0) {
+        throw new Error('Vui lòng chọn ít nhất 1 môn học');
+      }
+
+      const missingAdmissionDate = selectedSubjects.find((subject) => !subjectAdmissionDates[subject]);
+      if (missingAdmissionDate) {
+        throw new Error(`Vui lòng nhập ngày nhập học cho môn ${missingAdmissionDate === 'MATH' ? 'Toán' : 'Tiếng Anh'}`);
+      }
+
+      const admissionFeeConfirmed = admissionFeePaid || admissionFeePromotion;
+      if (admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' && !admissionFeeConfirmed) {
+        throw new Error('Vui lòng xác nhận đã đóng phí nhập học 300.000đ');
+      }
+
+      setError('');
+      setAdmissionConfirmDialogOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Có lỗi kiểm tra thông tin nhập học');
+    }
+  }
+
   async function submitStudent() {
+    setSavingAdmission(true);
     try {
       if (selectedSubjects.length === 0) {
         throw new Error('Vui lòng chọn ít nhất 1 môn học');
@@ -1528,6 +1633,7 @@ function StudentsPageContent() {
         }
       }
 
+      setAdmissionConfirmDialogOpen(false);
       setForm(emptyForm);
       setSelectedSubjects(['MATH']);
       setSubjectAdmissionDates({ MATH: TODAY_ISO });
@@ -1539,6 +1645,8 @@ function StudentsPageContent() {
       await refreshStudents();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Có lỗi khi lưu nhập học');
+    } finally {
+      setSavingAdmission(false);
     }
   }
 
@@ -1726,8 +1834,16 @@ function StudentsPageContent() {
         )
       );
 
-      const remainingActiveCount = activeEnrollments.length - targetIds.length;
-      await updateStudentStatus(dropoutStudent.id, remainingActiveCount > 0 ? STATUS_OFFICIAL : STATUS_DROPPED);
+      const remainingActiveEnrollments = dropoutStudent.enrollments.filter(
+        (enrollment) => !targetIds.includes(enrollment.id) && isEnrollmentActive(enrollment)
+      );
+      const hasOfficial = remainingActiveEnrollments.some((e) => e.registrationType === 'Chính thức');
+      const hasTrial = remainingActiveEnrollments.some((e) => e.registrationType === 'Học thử');
+      const nextStatus = remainingActiveEnrollments.length === 0
+        ? STATUS_DROPPED
+        : (hasOfficial ? STATUS_OFFICIAL : (hasTrial ? STATUS_TRIAL : STATUS_OFFICIAL));
+
+      await updateStudentStatus(dropoutStudent.id, nextStatus);
 
       setDropoutOpen(false);
       setDropoutStudent(null);
@@ -1924,7 +2040,7 @@ function StudentsPageContent() {
                     </>
                   ) : null}
                 </div>
-                <Button className="mt-4 w-full" onClick={() => void submitStudent()}><PlusCircle className="mr-2 h-4 w-4" />Lưu và tạo hồ sơ nhập học</Button>
+                <Button className="mt-4 w-full" onClick={handleOpenAdmissionConfirm}><PlusCircle className="mr-2 h-4 w-4" />Lưu và tạo hồ sơ nhập học</Button>
               </div>
             ) : null}
 
@@ -1950,23 +2066,24 @@ function StudentsPageContent() {
                       </>
                     ) : currentTab === 'hoc-thu' ? (
                       <Select value={trialStatusFilter} onValueChange={(value) => setTrialStatusFilter(value as TrialStatusFilter)}>
-                        <SelectTrigger><SelectValue placeholder="Trang thai" /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder="Trạng thái học thử" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={STATUS_TRIAL}>Học thử</SelectItem>
+                          <SelectItem value="all">Tất cả</SelectItem>
+                          <SelectItem value={STATUS_TRIAL}>Còn hạn</SelectItem>
                           <SelectItem value={STATUS_EXPIRED}>Hết hạn</SelectItem>
                         </SelectContent>
                       </Select>
                     ) : (
                       <>
                         <Select value={reportBMonthFilter} onValueChange={setReportBMonthFilter}>
-                          <SelectTrigger><SelectValue placeholder="Thang Report B" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Tháng Report B" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">Tháng report B</SelectItem>
                             {Array.from({ length: 12 }).map((_, idx) => <SelectItem key={idx + 1} value={String(idx + 1)}>Tháng {idx + 1}</SelectItem>)}
                           </SelectContent>
                         </Select>
                         <Select value={reportBYearFilter} onValueChange={setReportBYearFilter}>
-                          <SelectTrigger><SelectValue placeholder="Nam Report B" /></SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Năm Report B" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="all">Năm report B</SelectItem>
                             {reportBYears.map((year) => <SelectItem key={year} value={String(year)}>Năm {year}</SelectItem>)}
@@ -2088,8 +2205,24 @@ function StudentsPageContent() {
                           <TableCell>{row.paymentDate ? formatDate(row.paymentDate) : '-'}</TableCell>
                           <TableCell>{row.paymentMethod ?? '-'}</TableCell>
                           <TableCell>
-                            <div className="flex justify-end">
-                              {!row.paid ? <Button size="sm" onClick={() => openTuitionDialog(row.student)}><CircleDollarSign className="h-4 w-4" /></Button> : null}
+                            <div className="flex items-center justify-end gap-1.5">
+                              {!row.paid ? (
+                                <Button size="sm" onClick={() => openTuitionDialog(row.student)} title="Đóng học phí">
+                                  <CircleDollarSign className="mr-1.5 h-4 w-4" />
+                                  Đóng học phí
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:text-amber-800"
+                                  onClick={() => handleOpenRevertConfirm(row)}
+                                  title="Hoàn tác học phí đã đóng"
+                                >
+                                  <RotateCcw className="mr-1.5 h-4 w-4" />
+                                  Hoàn tác
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -2198,90 +2331,275 @@ function StudentsPageContent() {
         )
         : null}
 
-      <Dialog open={tuitionDialogOpen} onOpenChange={setTuitionDialogOpen}>
+      <Dialog open={tuitionDialogOpen} onOpenChange={(open) => {
+        setTuitionDialogOpen(open);
+        if (!open) setTuitionStep('form');
+      }}>
         <DialogContent className="max-h-[85vh] flex flex-col overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>Đóng học phí</DialogTitle>
-            <DialogDescription>{tuitionStudent ? `Học viên: ${tuitionStudent.fullName}` : ''}</DialogDescription>
-          </DialogHeader>
+          {tuitionStep === 'form' ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Đóng học phí</DialogTitle>
+                <DialogDescription>{tuitionStudent ? `Học viên: ${tuitionStudent.fullName}` : ''}</DialogDescription>
+              </DialogHeader>
 
-          <div className="space-y-4 overflow-y-auto pr-1">
-            <div className="space-y-2">
-              <Label>Họ tên học viên</Label>
-              <Input value={tuitionStudent?.fullName ?? ''} disabled />
-            </div>
+              <div className="space-y-4 overflow-y-auto pr-1">
+                <div className="space-y-2">
+                  <Label>Họ tên học viên</Label>
+                  <Input value={tuitionStudent?.fullName ?? ''} disabled />
+                </div>
 
-            <div className="space-y-2">
-              <Label>Tháng/năm thu</Label>
-              <div className="max-h-52 space-y-2 overflow-auto rounded-xl border p-3">
-                {availablePaymentMonths.map((item) => (
-                  <label key={item.key} className="flex items-center gap-2 text-sm">
+                <div className="space-y-2">
+                  <Label>Tháng/năm thu</Label>
+                  <div className="max-h-52 space-y-2 overflow-auto rounded-xl border p-3">
+                    {availablePaymentMonths.map((item) => (
+                      <label key={item.key} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={selectedPaymentMonths.includes(item.key)}
+                          onChange={(event) => {
+                            setSelectedPaymentMonths((current) => event.target.checked
+                              ? [...current, item.key]
+                              : current.filter((value) => value !== item.key));
+                          }}
+                        />
+                        <span>{item.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Ngày thu</Label>
+                  <Input type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Hình thức thanh toán</Label>
+                  <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Tiền mặt">Tiền mặt</SelectItem>
+                      <SelectItem value="Chuyển khoản">Chuyển khoản</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-3 rounded-xl border bg-muted/20 p-3 text-sm">
+                  <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
-                      checked={selectedPaymentMonths.includes(item.key)}
-                      onChange={(event) => {
-                        setSelectedPaymentMonths((current) => event.target.checked
-                          ? [...current, item.key]
-                          : current.filter((value) => value !== item.key));
-                      }}
+                      id="tuitionDiscount50"
+                      className="h-4 w-4 cursor-pointer"
+                      checked={tuitionDiscount50}
+                      onChange={(e) => setTuitionDiscount50(e.target.checked)}
                     />
-                    <span>{item.label}</span>
-                  </label>
-                ))}
+                    <Label htmlFor="tuitionDiscount50" className="font-medium text-emerald-600 cursor-pointer">Khuyến mãi 50%</Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="tuitionFree"
+                      className="h-4 w-4 cursor-pointer"
+                      checked={tuitionFree}
+                      onChange={(e) => setTuitionFree(e.target.checked)}
+                    />
+                    <Label htmlFor="tuitionFree" className="font-medium text-blue-600 cursor-pointer">Miễn học phí</Label>
+                  </div>
+                  <div className="space-y-1 mt-2">
+                    <Label>Phí thu (Gốc: {formatCurrency(tuitionDialogAmount)})</Label>
+                    <Input
+                      value={formatNumberWithDots(tuitionCustomAmount)}
+                      onChange={(e) => setTuitionCustomAmount(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Nhập số tiền..."
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label>Ngày thu</Label>
-              <Input type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
-            </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setTuitionDialogOpen(false)}>Hủy</Button>
+                <Button onClick={handleOpenTuitionConfirm}>Xem lại & Xác nhận</Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-slate-900">
+                  <CircleDollarSign className="h-5 w-5 text-emerald-600" />
+                  Xác nhận đóng học phí
+                </DialogTitle>
+                <DialogDescription>
+                  Vui lòng kiểm tra lại thông tin thu học phí trước khi ghi nhận vào hệ thống.
+                </DialogDescription>
+              </DialogHeader>
 
-            <div className="space-y-2">
-              <Label>Hình thức thanh toán</Label>
-              <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Tiền mặt">Tiền mặt</SelectItem>
-                  <SelectItem value="Chuyển khoản">Chuyển khoản</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              {tuitionStudent ? (
+                <div className="my-2 space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700">
+                  <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                    <span className="font-medium text-slate-500">Học viên</span>
+                    <span className="font-bold text-slate-950 text-right">{tuitionStudent.fullName}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                    <span className="font-medium text-slate-500">Các tháng đóng</span>
+                    <span className="font-semibold text-slate-900 text-right">
+                      {selectedPaymentMonths
+                        .map((m) => `Tháng ${m.split('-')[1]}/${m.split('-')[0]}`)
+                        .join(', ')}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                    <span className="font-medium text-slate-500">Hình thức</span>
+                    <span className="font-medium text-slate-900">{paymentMethod}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                    <span className="font-medium text-slate-500">Ngày thu</span>
+                    <span className="font-medium text-slate-900">{formatDate(paymentDate)}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-2 pt-1">
+                    <span className="font-bold text-slate-900">Tổng tiền thu</span>
+                    <span className="font-extrabold text-emerald-600 text-base">
+                      {formatCurrency(Number(String(tuitionCustomAmount).replace(/\D/g, '')))}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
 
-            <div className="space-y-3 rounded-xl border bg-muted/20 p-3 text-sm">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="tuitionDiscount50"
-                  className="h-4 w-4 cursor-pointer"
-                  checked={tuitionDiscount50}
-                  onChange={(e) => setTuitionDiscount50(e.target.checked)}
-                />
-                <Label htmlFor="tuitionDiscount50" className="font-medium text-emerald-600 cursor-pointer">Khuyến mãi 50%</Label>
+              <DialogFooter className="gap-3 sm:gap-3">
+                <Button variant="outline" onClick={() => setTuitionStep('form')} disabled={savingTuitionPayment}>
+                  Quay lại
+                </Button>
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  onClick={() => void submitTuitionPayment()}
+                  disabled={savingTuitionPayment}
+                >
+                  {savingTuitionPayment ? 'Đang ghi nhận...' : 'Đồng ý đóng học phí'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog xác nhận hoàn tác đóng học phí */}
+      <Dialog open={revertConfirmDialogOpen} onOpenChange={setRevertConfirmDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              Xác nhận hoàn tác đóng học phí
+            </DialogTitle>
+            <DialogDescription>
+              Hành động này sẽ xóa giao dịch thu học phí trong hệ thống và chuyển trạng thái về chưa đóng.
+            </DialogDescription>
+          </DialogHeader>
+
+          {revertTargetRow ? (
+            <div className="space-y-3 rounded-2xl border border-amber-200/80 bg-amber-50/50 p-4 text-sm text-slate-700">
+              <div className="flex items-start justify-between gap-2 border-b border-amber-200/60 pb-2">
+                <span className="font-medium text-slate-500">Học viên</span>
+                <span className="font-bold text-slate-950 text-right">{revertTargetRow.student.fullName}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="tuitionFree"
-                  className="h-4 w-4 cursor-pointer"
-                  checked={tuitionFree}
-                  onChange={(e) => setTuitionFree(e.target.checked)}
-                />
-                <Label htmlFor="tuitionFree" className="font-medium text-blue-600 cursor-pointer">Miễn học phí</Label>
+              <div className="flex items-start justify-between gap-2 border-b border-amber-200/60 pb-2">
+                <span className="font-medium text-slate-500">Tháng hoàn tác</span>
+                <span className="font-semibold text-slate-900">
+                  Tháng {selectedFilterMonthKey.split('-')[1]}/{selectedFilterMonthKey.split('-')[0]}
+                </span>
               </div>
-              <div className="space-y-1 mt-2">
-                <Label>Phí thu (Gốc: {formatCurrency(tuitionDialogAmount)})</Label>
-                <Input
-                  value={formatNumberWithDots(tuitionCustomAmount)}
-                  onChange={(e) => setTuitionCustomAmount(e.target.value.replace(/\\D/g, ''))}
-                  placeholder="Nhập số tiền..."
-                />
+              <div className="flex items-start justify-between gap-2 border-b border-amber-200/60 pb-2">
+                <span className="font-medium text-slate-500">Số tiền đã thu</span>
+                <span className="font-bold text-amber-700">{formatCurrency(revertTargetRow.paidAmount)}</span>
+              </div>
+              <div className="flex items-start justify-between gap-2 pt-1">
+                <span className="font-medium text-slate-500">Ngày thu ban đầu</span>
+                <span className="font-medium text-slate-900">{revertTargetRow.paymentDate ? formatDate(revertTargetRow.paymentDate) : '-'}</span>
               </div>
             </div>
+          ) : null}
+
+          <DialogFooter className="gap-3 sm:gap-3">
+            <Button variant="outline" onClick={() => setRevertConfirmDialogOpen(false)} disabled={savingRevertTuition}>
+              Hủy
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => void confirmRevertTuition()}
+              disabled={savingRevertTuition}
+            >
+              {savingRevertTuition ? 'Đang hoàn tác...' : 'Xác nhận hoàn tác'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog xác nhận tạo hồ sơ nhập học */}
+      <Dialog open={admissionConfirmDialogOpen} onOpenChange={setAdmissionConfirmDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <PlusCircle className="h-5 w-5 text-emerald-600" />
+              Xác nhận tạo hồ sơ nhập học
+            </DialogTitle>
+            <DialogDescription>
+              Vui lòng kiểm tra lại toàn bộ thông tin học viên trước khi lưu vào hệ thống.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-700">
+            <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+              <span className="font-medium text-slate-500">Họ tên học viên</span>
+              <span className="font-bold text-slate-950 text-right">{form.fullName}</span>
+            </div>
+            <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+              <span className="font-medium text-slate-500">Loại đăng ký</span>
+              <Badge variant={admissionRegistrationType === 'Chinh thuc' ? 'success' : 'warning'}>
+                {admissionRegistrationType === 'Chinh thuc' ? 'Chính thức' : 'Học thử'}
+              </Badge>
+            </div>
+            <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+              <span className="font-medium text-slate-500">Các môn đăng ký</span>
+              <span className="font-semibold text-slate-900 text-right">
+                {selectedSubjects
+                  .map((s) => (s === 'MATH' ? 'Toán' : 'Tiếng Anh'))
+                  .join(', ')}
+              </span>
+            </div>
+            {form.fatherFullName || form.motherFullName ? (
+              <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                <span className="font-medium text-slate-500">Phụ huynh</span>
+                <span className="font-medium text-slate-900 text-right">
+                  {[form.fatherFullName, form.motherFullName].filter(Boolean).join(' / ')}
+                </span>
+              </div>
+            ) : null}
+            {form.fatherPhone || form.motherPhone ? (
+              <div className="flex items-start justify-between gap-2 border-b border-slate-200/80 pb-2">
+                <span className="font-medium text-slate-500">Số điện thoại</span>
+                <span className="font-medium text-slate-900">{form.fatherPhone || form.motherPhone}</span>
+              </div>
+            ) : null}
+            {admissionRegistrationType === 'Chinh thuc' && officialIntakeSource === 'new' ? (
+              <div className="flex items-start justify-between gap-2 pt-1">
+                <span className="font-bold text-slate-900">Phí nhập học</span>
+                <span className="font-bold text-emerald-600">
+                  {admissionFeePromotion ? 'Miễn phí (Khuyến mãi)' : 'Đã thu 300.000đ'}
+                </span>
+              </div>
+            ) : null}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setTuitionDialogOpen(false)}>Hủy</Button>
-            <Button onClick={() => void submitTuitionPayment()}>Xác nhận đóng học phí</Button>
+          <DialogFooter className="gap-3 sm:gap-3">
+            <Button variant="outline" onClick={() => setAdmissionConfirmDialogOpen(false)} disabled={savingAdmission}>
+              Hủy
+            </Button>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={() => void submitStudent()}
+              disabled={savingAdmission}
+            >
+              {savingAdmission ? 'Đang tạo hồ sơ...' : 'Đồng ý tạo hồ sơ'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

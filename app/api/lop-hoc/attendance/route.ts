@@ -14,22 +14,24 @@ function fromAttendanceStatus(value: string) {
 }
 
 function combineDateAndTime(dateInput: string, checkInTime?: string | null) {
-  const baseDate = parseDateInput(dateInput);
-  if (!checkInTime) {
-    return baseDate;
+  const [yearStr, monthStr, dayStr] = dateInput.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+
+  if (isNaN(year) || isNaN(month) || isNaN(day)) {
+    return parseDateInput(dateInput);
   }
 
-  const [hoursText, minutesText] = checkInTime.split(':');
-  const hours = Number(hoursText);
-  const minutes = Number(minutesText);
-
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return baseDate;
+  let hours = 0;
+  let minutes = 0;
+  if (checkInTime) {
+    const [h, m] = checkInTime.split(':').map(Number);
+    if (Number.isFinite(h)) hours = h;
+    if (Number.isFinite(m)) minutes = m;
   }
 
-  const merged = new Date(baseDate);
-  merged.setHours(hours, minutes, 0, 0);
-  return merged;
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
 }
 
 export async function POST(request: NextRequest) {

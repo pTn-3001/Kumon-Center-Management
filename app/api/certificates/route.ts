@@ -103,9 +103,16 @@ export async function POST(request: NextRequest) {
       centerId: center.id,
       fullName: body.studentName,
     },
+    include: {
+      enrollments: true,
+    },
   });
 
-  if (!existingStudent || !['OFFICIAL', 'TRIAL'].includes(existingStudent.status)) {
+  const hasActiveEnrollment = existingStudent?.enrollments.some(
+    (e: { endDate: Date | null; reenrollDate: Date | null }) => !e.endDate || (e.reenrollDate && e.reenrollDate > e.endDate)
+  );
+
+  if (!existingStudent || (!['OFFICIAL', 'TRIAL'].includes(existingStudent.status) && !hasActiveEnrollment)) {
     return NextResponse.json({ message: 'Chỉ có thể in giấy khen cho học viên chính thức hoặc học thử' }, { status: 400 });
   }
 
