@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableStudentSelect } from '@/components/ui/searchable-student-select';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate, formatTime24 } from '@/lib/utils';
@@ -859,18 +860,16 @@ function ClassPageContent() {
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label>Học viên</Label>
-                        <Select value={extraStudentId} onValueChange={setExtraStudentId}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Chọn học viên học thêm" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {extraStudentCandidates.map((student) => (
-                              <SelectItem key={student.id} value={String(student.id)}>
-                                {student.fullName}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <SearchableStudentSelect
+                          options={extraStudentCandidates.map((student) => ({
+                            value: String(student.id),
+                            label: student.fullName,
+                          }))}
+                          value={extraStudentId}
+                          onValueChange={setExtraStudentId}
+                          placeholder="Chọn học viên học thêm"
+                          searchPlaceholder="Tìm tên học viên học thêm..."
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Ngày học thêm</Label>
@@ -911,20 +910,17 @@ function ClassPageContent() {
                   <CardContent className="space-y-4">
                     <div className="space-y-2">
                       <Label>Học viên</Label>
-                      <Select value={attendanceStudentId} onValueChange={setAttendanceStudentId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn học viên" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {filteredClassStudentsForAttendance.map((student) => (
-                            <SelectItem key={student.id} value={String(student.id)}>
-                              {student.fullName}
-                              {student.status === 'Học bù' ? ' (Học bù)' : ''}
-                              {student.status === 'Học thêm' ? ' (Học thêm)' : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableStudentSelect
+                        options={filteredClassStudentsForAttendance.map((student) => ({
+                          value: String(student.id),
+                          label: student.fullName,
+                          subLabel: student.status === 'Học bù' ? 'Học bù' : student.status === 'Học thêm' ? 'Học thêm' : undefined,
+                        }))}
+                        value={attendanceStudentId}
+                        onValueChange={setAttendanceStudentId}
+                        placeholder="Chọn học viên"
+                        searchPlaceholder="Tìm tên học viên điểm danh..."
+                      />
                     </div>
                     <div className="grid gap-3">
                       <div className="space-y-2">

@@ -296,6 +296,7 @@ function StudentsPageContent() {
   const [tuitionStatusFilter, setTuitionStatusFilter] = useState<TuitionStatusFilter>('all');
   const [reportBMonthFilter, setReportBMonthFilter] = useState<string>('all');
   const [reportBYearFilter, setReportBYearFilter] = useState<string>('all');
+  const [leaveDateFilter, setLeaveDateFilter] = useState<string>('');
 
   const [birthdayFilter, setBirthdayFilter] = useState<BirthdayFilter>('all');
   const [tuitionMonthFilter, setTuitionMonthFilter] = useState(() => {
@@ -559,8 +560,14 @@ function StudentsPageContent() {
   );
 
   const filteredLeaveStudents = useMemo(
-    () => leaveStudents.filter((s) => matchesSearch(s) && matchesReportBMonth(s)),
-    [leaveStudents, matchesSearch, matchesReportBMonth]
+    () => leaveStudents.filter((s) => {
+      if (!matchesSearch(s)) return false;
+      if (!leaveDateFilter) return true;
+      return s.enrollments.some((enrollment) =>
+        isEnrollmentDropped(enrollment) && enrollment.endDate && enrollment.endDate.slice(0, 7) === leaveDateFilter
+      );
+    }),
+    [leaveStudents, matchesSearch, leaveDateFilter]
   );
 
   const filteredTrialStudents = useMemo(
@@ -2073,6 +2080,27 @@ function StudentsPageContent() {
                           <SelectItem value={STATUS_EXPIRED}>Hết hạn</SelectItem>
                         </SelectContent>
                       </Select>
+                    ) : currentTab === 'nghi-hoc' ? (
+                      <div className="flex items-center gap-2 lg:col-span-2">
+                        <Input
+                          type="month"
+                          value={leaveDateFilter}
+                          onChange={(e) => setLeaveDateFilter(e.target.value)}
+                          placeholder="Lọc tháng nghỉ học (mm/yyyy)"
+                          className="w-full"
+                        />
+                        {leaveDateFilter ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setLeaveDateFilter('')}
+                            className="whitespace-nowrap"
+                          >
+                            Xóa lọc
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : (
                       <>
                         <Select value={reportBMonthFilter} onValueChange={setReportBMonthFilter}>
@@ -2119,9 +2147,8 @@ function StudentsPageContent() {
                     students={filteredLeaveStudents}
                     selectedStudentId={selectedLeaveStudent?.id ?? null}
                     statusVariant="destructive"
-                    showReportB
-                    reportBMonthFilter={reportBMonthFilter}
-                    reportBYearFilter={reportBYearFilter}
+                    showLeaveDate
+                    leaveDateFilter={leaveDateFilter}
                     onSelect={setSelectedStudentId}
                   />
                 </div>
@@ -2291,7 +2318,7 @@ function StudentsPageContent() {
                 student={selectedLeaveStudent}
                 classGroups={classGroups}
                 statusVariant="destructive"
-                showReportB
+                showLeaveDate
                 onEdit={handleEditFromPanel}
                 onAssign={handleAssignFromPanel}
                 extraActionLabel="Nhập học lại"
@@ -3032,9 +3059,11 @@ type StudentTableProps = {
   selectedStudentId: number | null;
   statusVariant: 'success' | 'warning' | 'destructive';
   showReportB?: boolean;
+  showLeaveDate?: boolean;
   showTrialCountdown?: boolean;
   reportBMonthFilter?: string;
   reportBYearFilter?: string;
+  leaveDateFilter?: string;
   onSelect: (studentId: number) => void;
   getTrialDaysLeft?: (student: ApiStudent) => number;
 };
@@ -3044,6 +3073,7 @@ type StudentDetailPanelProps = {
   classGroups: ApiClassGroup[];
   statusVariant: 'success' | 'warning' | 'destructive';
   showReportB?: boolean;
+  showLeaveDate?: boolean;
   showTrialCountdown?: boolean;
   showOfficialRegisterButton?: boolean;
   onEdit: (student: ApiStudent) => void;
@@ -3062,6 +3092,7 @@ function StudentDetailPanel({
   classGroups,
   statusVariant,
   showReportB,
+  showLeaveDate,
   showTrialCountdown,
   showOfficialRegisterButton,
   onEdit,
@@ -3154,7 +3185,9 @@ function StudentDetailPanel({
         </div>
 
         <div className="space-y-3 rounded-xl border bg-white p-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ngày nhập học và ngày Report B theo môn</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {showLeaveDate ? 'Ngày nhập học và ngày nghỉ học theo môn' : 'Ngày nhập học và ngày Report B theo môn'}
+          </p>
           {student.enrollments.length ? (
             <div className="space-y-3 text-sm">
               {student.enrollments.map((enrollment) => (
@@ -3165,7 +3198,11 @@ function StudentDetailPanel({
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <p className="text-xs text-muted-foreground">Nhập học: {formatDate(enrollment.startDate)}</p>
-                    <p className="text-xs text-muted-foreground">Report B: {enrollment.reportBDate ? formatDate(enrollment.reportBDate) : (student.reportBDate ? formatDate(student.reportBDate) : '-')}</p>
+                    {showLeaveDate ? (
+                      <p className="text-xs text-muted-foreground">Nghỉ học: {enrollment.endDate ? formatDate(enrollment.endDate) : '-'}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Report B: {enrollment.reportBDate ? formatDate(enrollment.reportBDate) : (student.reportBDate ? formatDate(student.reportBDate) : '-')}</p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -3232,15 +3269,22 @@ function StudentTable({
   selectedStudentId,
   statusVariant,
   showReportB,
+  showLeaveDate,
   showTrialCountdown,
   reportBMonthFilter,
   reportBYearFilter,
+  leaveDateFilter,
   onSelect,
   getTrialDaysLeft,
 }: StudentTableProps) {
-  const totalColumns = 7 + (showReportB ? 1 : 0) + (showTrialCountdown ? 1 : 0);
+  const totalColumns = 7 + (showReportB ? 1 : 0) + (showLeaveDate ? 1 : 0) + (showTrialCountdown ? 1 : 0);
 
   const isEnrollmentVisibleByReportBFilter = useCallback((enrollment: ApiStudent['enrollments'][0], student: ApiStudent) => {
+    if (showLeaveDate) {
+      if (!leaveDateFilter) return true;
+      return Boolean(enrollment.endDate && enrollment.endDate.slice(0, 7) === leaveDateFilter);
+    }
+
     if (!reportBMonthFilter || reportBMonthFilter === 'all' && (!reportBYearFilter || reportBYearFilter === 'all')) return true;
 
     const effectiveReportBDate = enrollment.reportBDate ?? student.reportBDate;
@@ -3250,7 +3294,7 @@ function StudentTable({
     const monthOk = !reportBMonthFilter || reportBMonthFilter === 'all' || reportBDate.getMonth() + 1 === Number(reportBMonthFilter);
     const yearOk = !reportBYearFilter || reportBYearFilter === 'all' || reportBDate.getFullYear() === Number(reportBYearFilter);
     return monthOk && yearOk;
-  }, [reportBMonthFilter, reportBYearFilter]);
+  }, [showLeaveDate, leaveDateFilter, reportBMonthFilter, reportBYearFilter]);
 
   const mathEnrollmentCount = students.reduce(
     (sum, student) => sum + student.enrollments.filter((enrollment) =>
@@ -3277,6 +3321,7 @@ function StudentTable({
           <TableHead>Ngày nhập học</TableHead>
           {showReportB ? <TableHead>Ngày Report B</TableHead> : null}
           {showTrialCountdown ? <TableHead>Đếm ngược hạn</TableHead> : null}
+          {showLeaveDate ? <TableHead>Ngày nghỉ học</TableHead> : null}
           <TableHead>Trạng thái</TableHead>
           <TableHead>Địa chỉ</TableHead>
         </TableRow>
@@ -3360,6 +3405,18 @@ function StudentTable({
                   ) : (
                     <Badge className="whitespace-nowrap" variant="destructive">Quá hạn {Math.abs(daysLeft ?? 0)} ngày</Badge>
                   )}
+                </TableCell>
+              ) : null}
+              {showLeaveDate ? (
+                <TableCell>
+                  <div className="space-y-1">
+                    {student.enrollments.length > 0 ? student.enrollments.map((enrollment) => (
+                      <div key={`leave-${enrollment.id}`} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs">
+                        <span className="font-medium">{enrollment.subjectCode === 'MATH' ? 'Toán' : 'Tiếng Anh'}:</span>{' '}
+                        {enrollment.endDate ? formatDate(enrollment.endDate) : '-'}
+                      </div>
+                    )) : '-'}
+                  </div>
                 </TableCell>
               ) : null}
               <TableCell><Badge className="whitespace-nowrap" variant={displayedStatus === STATUS_EXPIRED ? 'destructive' : statusVariant}>{displayedStatus}</Badge></TableCell>
