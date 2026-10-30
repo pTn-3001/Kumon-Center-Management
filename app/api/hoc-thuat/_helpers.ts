@@ -6,8 +6,8 @@ export const DEFAULT_CENTER_ID = 1;
 export async function ensureCenter() {
   return prisma.center.upsert({
     where: { id: DEFAULT_CENTER_ID },
-    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-DIAN', name: 'Kumon Dĩ An' },
-    update: {},
+    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-GIAHOA', name: 'Kumon Gia Hòa' },
+    update: { name: 'Kumon Gia Hòa' },
   });
 }
 

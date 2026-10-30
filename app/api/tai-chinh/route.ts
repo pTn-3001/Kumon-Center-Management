@@ -71,8 +71,7 @@ function parseSalaryMeta(note: string) {
 export async function GET() {
   const items: any[] = await prisma.finance.findMany({
     where: { centerId: DEFAULT_CENTER_ID },
-    orderBy: { spentAt: 'desc' },
-    take: 200,
+    orderBy: [{ spentAt: 'desc' }, { id: 'desc' }],
   });
 
   return NextResponse.json(items.map((item: any) => ({

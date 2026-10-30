@@ -38,7 +38,6 @@ export async function GET(request: NextRequest) {
       ],
     },
     orderBy: { createdAt: 'desc' },
-    take: 50,
     include: {
       reads: {
         where: { staffId: session.id },

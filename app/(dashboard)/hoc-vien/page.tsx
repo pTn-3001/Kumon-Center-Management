@@ -209,6 +209,9 @@ function isEnrollmentDropped(enrollment: { endDate: string | null; reenrollDate:
 
 function toMonthKey(dateValue: string) {
   const date = parseISO(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return dateValue.slice(0, 7);
+  }
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
@@ -239,21 +242,74 @@ function getFirstMonthMultiplier(reportBDate: string | null) {
   return reportDay === 1 ? 1 : 0.5;
 }
 
+function isEnrollmentEligibleForTuitionInMonth(
+  enrollment: ApiStudent['enrollments'][number],
+  student: ApiStudent,
+  monthKey: string,
+) {
+  if (enrollment.registrationType === 'Học thử' && student.status !== STATUS_OFFICIAL) {
+    return false;
+  }
+
+  const effectiveStartDate =
+    enrollment.reportBDate ??
+    student.reportBDate ??
+    enrollment.startDate ??
+    student.admissionDate;
+
+  if (effectiveStartDate) {
+    const startMonthKey = toMonthKey(effectiveStartDate);
+    if (isBeforeMonth(monthKey, startMonthKey)) {
+      return false;
+    }
+  }
+
+  if (!enrollment.endDate) {
+    return true;
+  }
+
+  const endMonthKey = toMonthKey(enrollment.endDate);
+
+  if (enrollment.reenrollDate) {
+    const reenrollTime = parseISO(enrollment.reenrollDate).getTime();
+    const endTime = parseISO(enrollment.endDate).getTime();
+    const reenrollMonthKey = toMonthKey(enrollment.reenrollDate);
+
+    if (reenrollTime > endTime) {
+      return isBeforeMonth(monthKey, endMonthKey) || !isBeforeMonth(monthKey, reenrollMonthKey);
+    }
+  }
+
+  return isBeforeMonth(monthKey, endMonthKey);
+}
+
+function getEnrollmentsForTuitionMonth(student: ApiStudent, monthKey: string) {
+  return student.enrollments.filter((enrollment) =>
+    isEnrollmentEligibleForTuitionInMonth(enrollment, student, monthKey)
+  );
+}
+
 function getEnrollmentTuitionForMonth(
-  enrollment: { reportBDate: string | null },
+  enrollment: { reportBDate: string | null; startDate?: string | null },
   monthKey: string,
   fallbackReportBDate: string | null,
+  fallbackStartDate?: string | null,
 ) {
   const effectiveReportBDate = enrollment.reportBDate ?? fallbackReportBDate;
+  const effectiveStartDate = effectiveReportBDate ?? enrollment.startDate ?? fallbackStartDate ?? null;
+
+  if (effectiveStartDate) {
+    const startMonthKey = toMonthKey(effectiveStartDate);
+    if (isBeforeMonth(monthKey, startMonthKey)) {
+      return 0;
+    }
+  }
+
   if (!effectiveReportBDate) {
     return TUITION_PER_SUBJECT_PER_MONTH;
   }
 
   const reportBMonthKey = toMonthKey(effectiveReportBDate);
-  if (isBeforeMonth(monthKey, reportBMonthKey)) {
-    return 0;
-  }
-
   return reportBMonthKey === monthKey
     ? TUITION_PER_SUBJECT_PER_MONTH * getFirstMonthMultiplier(effectiveReportBDate)
     : TUITION_PER_SUBJECT_PER_MONTH;
@@ -270,15 +326,23 @@ function toBirthDateKey(value: string | null | undefined) {
 function calculateStudentTuitionForMonth(
   student: ApiStudent,
   monthKey: string,
-  activeEnrollments: Array<{ reportBDate: string | null }>,
+  activeEnrollments: Array<{ reportBDate: string | null; startDate?: string | null }>,
 ) {
-  const enrollmentsToCharge = activeEnrollments.length > 0 ? activeEnrollments : student.enrollments;
+  const enrollmentsToCharge =
+    activeEnrollments.length > 0
+      ? activeEnrollments
+      : student.enrollments.length > 0
+        ? student.enrollments
+        : student.status === STATUS_OFFICIAL
+          ? [{ reportBDate: student.reportBDate, startDate: student.admissionDate }]
+          : [];
+
   if (enrollmentsToCharge.length === 0) {
     return 0;
   }
 
   return enrollmentsToCharge.reduce((total, enrollment) => (
-    total + getEnrollmentTuitionForMonth(enrollment, monthKey, student.reportBDate)
+    total + getEnrollmentTuitionForMonth(enrollment, monthKey, student.reportBDate, student.admissionDate)
   ), 0);
 }
 
@@ -564,7 +628,7 @@ function StudentsPageContent() {
       if (!matchesSearch(s)) return false;
       if (!leaveDateFilter) return true;
       return s.enrollments.some((enrollment) =>
-        isEnrollmentDropped(enrollment) && enrollment.endDate && enrollment.endDate.slice(0, 7) === leaveDateFilter
+        isEnrollmentDropped(enrollment) && enrollment.endDate && toMonthKey(enrollment.endDate) === leaveDateFilter
       );
     }),
     [leaveStudents, matchesSearch, leaveDateFilter]
@@ -744,14 +808,18 @@ function StudentsPageContent() {
       return null;
     }
 
-    const monthMatch = /month=(\d{4}-\d{2})/.exec(note);
-    const month = monthMatch?.[1] ?? item.spentAt.slice(0, 7);
-    const methodMatch = /method=([^;]+)/.exec(note);
+    const monthMatch = /month=(\d{4})-(\d{1,2})/.exec(note);
+    const month = monthMatch
+      ? `${monthMatch[1]}-${monthMatch[2].padStart(2, '0')}`
+      : toMonthKey(item.spentAt);
+    const methodMatch = /method=([^;|]+)/.exec(note);
+    const subjectsMatch = /subjects=(\d+)/.exec(note);
 
     return {
       studentId: Number(studentIdMatch[1]),
       month,
-      method: methodMatch ? methodMatch[1] : 'Không rõ',
+      method: methodMatch ? methodMatch[1].trim() : 'Không rõ',
+      subjects: subjectsMatch ? Number(subjectsMatch[1]) : null,
     };
   }, []);
 
@@ -769,19 +837,38 @@ function StudentsPageContent() {
   }, [financeItems, parseTuitionFinanceItem]);
 
   const tuitionPaymentDetailsMap = useMemo(() => {
-    const map = new Map<string, { financeItemId: number; paymentDate: string; paymentMethod: string; amount: number }>();
+    const map = new Map<string, {
+      financeItemId: number;
+      financeItemIds: number[];
+      paymentDate: string;
+      paymentMethod: string;
+      amount: number;
+      subjects: number | null;
+    }>();
     financeItems.forEach((item) => {
       const parsed = parseTuitionFinanceItem(item);
       if (!parsed) {
         return;
       }
 
-      map.set(`${parsed.studentId}-${parsed.month}`, {
-        financeItemId: item.id,
-        paymentDate: item.spentAt.slice(0, 10),
-        paymentMethod: parsed.method,
-        amount: item.amount,
-      });
+      const key = `${parsed.studentId}-${parsed.month}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.financeItemIds.push(item.id);
+        existing.amount += item.amount;
+        if (parsed.subjects && (!existing.subjects || parsed.subjects > existing.subjects)) {
+          existing.subjects = parsed.subjects;
+        }
+      } else {
+        map.set(key, {
+          financeItemId: item.id,
+          financeItemIds: [item.id],
+          paymentDate: item.spentAt,
+          paymentMethod: parsed.method,
+          amount: item.amount,
+          subjects: parsed.subjects,
+        });
+      }
     });
     return map;
   }, [financeItems, parseTuitionFinanceItem]);
@@ -799,27 +886,63 @@ function StudentsPageContent() {
   ), []);
 
   const tuitionRows = useMemo(() => {
-    return officialStudents
-      .filter((student) => student.enrollments.length > 0)
+    return students
       .map((student) => {
-        const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
-        const subjectCount = Math.max(1, activeEnrollments.length || student.enrollments.length);
-        const estimatedAmount = calculateStudentTuitionForMonth(student, selectedFilterMonthKey, activeEnrollments);
         const key = `${student.id}-${selectedFilterMonthKey}`;
         const paid = paidMap.has(key);
         const paymentDetails = tuitionPaymentDetailsMap.get(key);
+
+        const eligibleEnrollments = getEnrollmentsForTuitionMonth(student, selectedFilterMonthKey);
+        const hasFallbackOfficialStatus =
+          student.enrollments.length === 0 &&
+          student.status === STATUS_OFFICIAL &&
+          !isBeforeMonth(selectedFilterMonthKey, toMonthKey(student.reportBDate ?? student.admissionDate));
+
+        if (eligibleEnrollments.length === 0 && !hasFallbackOfficialStatus && !paid) {
+          return null;
+        }
+
+        const calculatedAmount =
+          eligibleEnrollments.length > 0 || hasFallbackOfficialStatus
+            ? calculateStudentTuitionForMonth(student, selectedFilterMonthKey, eligibleEnrollments)
+            : 0;
+
+        const officialEnrollmentsCount = student.enrollments.filter((e) => e.registrationType === 'Chính thức').length;
+        const fallbackSubjectCount =
+          paymentDetails?.subjects ??
+          Math.max(1, officialEnrollmentsCount || student.enrollments.length);
+
+        const subjectCount =
+          eligibleEnrollments.length > 0
+            ? eligibleEnrollments.length
+            : fallbackSubjectCount;
+
+        const estimatedAmount =
+          calculatedAmount > 0
+            ? calculatedAmount
+            : paid
+              ? (paymentDetails?.subjects
+                  ? paymentDetails.subjects * TUITION_PER_SUBJECT_PER_MONTH
+                  : (paymentDetails?.amount || subjectCount * TUITION_PER_SUBJECT_PER_MONTH))
+              : 0;
+
+        if (estimatedAmount <= 0 && !paid) {
+          return null;
+        }
+
         return {
           student,
           subjectCount,
           estimatedAmount,
           paid,
           financeItemId: paymentDetails?.financeItemId ?? null,
+          financeItemIds: paymentDetails?.financeItemIds ?? [],
           paidAmount: paymentDetails?.amount ?? 0,
           paymentDate: paymentDetails?.paymentDate ?? null,
           paymentMethod: paymentDetails?.paymentMethod ?? null,
         };
       })
-      .filter((item) => item.estimatedAmount > 0)
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
       .filter((item) => matchesSearch(item.student))
       .filter((item) => {
         if (tuitionStatusFilter === 'all') return true;
@@ -827,7 +950,20 @@ function StudentsPageContent() {
         return !item.paid;
       })
       .sort((a, b) => Number(a.paid) - Number(b.paid));
-  }, [officialStudents, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+  }, [students, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+
+  const [tuitionPage, setTuitionPage] = useState(1);
+  const [tuitionPageSize, setTuitionPageSize] = useState(50);
+
+  useEffect(() => {
+    setTuitionPage(1);
+  }, [selectedFilterMonthKey, tuitionStatusFilter, search]);
+
+  const paginatedTuitionRows = useMemo(() => {
+    if (tuitionPageSize <= 0) return tuitionRows;
+    const start = (tuitionPage - 1) * tuitionPageSize;
+    return tuitionRows.slice(start, start + tuitionPageSize);
+  }, [tuitionRows, tuitionPage, tuitionPageSize]);
 
   const tuitionTotal = useMemo(() => tuitionRows.reduce((total, row) => total + row.estimatedAmount, 0), [tuitionRows]);
 
@@ -843,7 +979,7 @@ function StudentsPageContent() {
         return total;
       }
 
-      const spentAtMonth = item.spentAt.slice(0, 7);
+      const spentAtMonth = toMonthKey(item.spentAt);
       if (spentAtMonth !== selectedFilterMonthKey) {
         return total;
       }
@@ -857,9 +993,11 @@ function StudentsPageContent() {
       return 0;
     }
 
-    const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
     return selectedPaymentMonths.reduce(
-      (total, monthKey) => total + calculateStudentTuitionForMonth(tuitionStudent, monthKey, activeEnrollments),
+      (total, monthKey) => {
+        const monthEnrollments = getEnrollmentsForTuitionMonth(tuitionStudent, monthKey);
+        return total + calculateStudentTuitionForMonth(tuitionStudent, monthKey, monthEnrollments);
+      },
       0,
     );
   }, [selectedPaymentMonths, tuitionStudent]);
@@ -1046,7 +1184,7 @@ function StudentsPageContent() {
     setTuitionDiscount50(false);
     setTuitionFree(false);
     
-    const activeEnrollments = student.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
+    const activeEnrollments = getEnrollmentsForTuitionMonth(student, tuitionMonthFilter);
     const amount = calculateStudentTuitionForMonth(student, tuitionMonthFilter, activeEnrollments);
     setTuitionCustomAmount(amount.toString());
     setTuitionStep('form');
@@ -1075,13 +1213,13 @@ function StudentsPageContent() {
 
     setSavingTuitionPayment(true);
     try {
-      const activeEnrollments = tuitionStudent.enrollments.filter((enrollment) => isEnrollmentActive(enrollment));
-      const subjectCount = Math.max(1, activeEnrollments.length || tuitionStudent.enrollments.length);
-
       const parsedCustomAmount = Number(String(tuitionCustomAmount).replace(/\D/g, ''));
       const amountPerMonth = Math.round(parsedCustomAmount / selectedPaymentMonths.length);
 
       const requests = selectedPaymentMonths.map((monthKey, index) => {
+        const monthEnrollments = getEnrollmentsForTuitionMonth(tuitionStudent, monthKey);
+        const subjectCount = Math.max(1, monthEnrollments.length || tuitionStudent.enrollments.length);
+
         const thisMonthAmount = index === selectedPaymentMonths.length - 1 
           ? parsedCustomAmount - amountPerMonth * (selectedPaymentMonths.length - 1)
           : amountPerMonth;
@@ -1150,11 +1288,20 @@ function StudentsPageContent() {
 
     setSavingRevertTuition(true);
     try {
-      const response = await fetch(`/api/tai-chinh/${revertTargetRow.financeItemId}`, {
-        method: 'DELETE',
-      });
+      const targetIds =
+        revertTargetRow.financeItemIds && revertTargetRow.financeItemIds.length > 0
+          ? revertTargetRow.financeItemIds
+          : [revertTargetRow.financeItemId];
 
-      if (!response.ok) {
+      const responses = await Promise.all(
+        targetIds.map((id) =>
+          fetch(`/api/tai-chinh/${id}`, {
+            method: 'DELETE',
+          })
+        )
+      );
+
+      if (responses.some((response) => !response.ok)) {
         throw new Error('Không thể hoàn tác đóng học phí');
       }
 
@@ -2081,22 +2228,40 @@ function StudentsPageContent() {
                         </SelectContent>
                       </Select>
                     ) : currentTab === 'nghi-hoc' ? (
-                      <div className="flex items-center gap-2 lg:col-span-2">
-                        <Input
-                          type="month"
-                          value={leaveDateFilter}
-                          onChange={(e) => setLeaveDateFilter(e.target.value)}
-                          placeholder="Lọc tháng nghỉ học (mm/yyyy)"
-                          className="w-full"
-                        />
+                      <div className="flex items-center gap-2.5 lg:col-span-2">
+                        <Label className="text-xs font-semibold text-slate-700 whitespace-nowrap shrink-0">
+                          Ngày nghỉ học:
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            type={leaveDateFilter ? "month" : "text"}
+                            onFocus={(e) => {
+                              e.currentTarget.type = "month";
+                              try {
+                                e.currentTarget.showPicker?.();
+                              } catch {}
+                            }}
+                            onBlur={(e) => {
+                              if (!e.currentTarget.value) e.currentTarget.type = "text";
+                            }}
+                            value={leaveDateFilter}
+                            onChange={(e) => setLeaveDateFilter(e.target.value)}
+                            placeholder="Chọn tháng nghỉ..."
+                            className="w-[170px] h-10 text-xs pr-8 bg-white cursor-pointer"
+                          />
+                          {!leaveDateFilter && (
+                            <CalendarDays className="pointer-events-none absolute right-2.5 top-3 h-4 w-4 text-slate-400" />
+                          )}
+                        </div>
                         {leaveDateFilter ? (
                           <Button
                             type="button"
                             variant="outline"
                             size="sm"
                             onClick={() => setLeaveDateFilter('')}
-                            className="whitespace-nowrap"
+                            className="h-10 px-2.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 whitespace-nowrap"
                           >
+                            <X className="mr-1 h-3.5 w-3.5" />
                             Xóa lọc
                           </Button>
                         ) : null}
@@ -2191,8 +2356,19 @@ function StudentsPageContent() {
 
             <TabsContent value="chua-thu-hoc-phi" className="space-y-4">
               <Card className="border bg-white">
-                <CardHeader>
+                <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <CardTitle className="text-lg">Danh sách học phí tháng {tuitionMonthFilter.split('-')[1]}/{tuitionMonthFilter.split('-')[0]}</CardTitle>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Badge variant="outline" className="font-medium text-slate-700">
+                      Tổng học viên: {tuitionRows.length}
+                    </Badge>
+                    <Badge variant="success" className="font-medium">
+                      Đã đóng: {tuitionRows.filter((r) => r.paid).length}
+                    </Badge>
+                    <Badge variant="warning" className="font-medium">
+                      Chưa đóng: {tuitionRows.filter((r) => !r.paid).length}
+                    </Badge>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <Table>
@@ -2209,7 +2385,7 @@ function StudentsPageContent() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {tuitionRows.map((row) => (
+                      {paginatedTuitionRows.map((row) => (
                         <TableRow key={row.student.id}>
                           <TableCell className="font-medium">{row.student.fullName}</TableCell>
                           <TableCell>{row.subjectCount}</TableCell>
@@ -2254,8 +2430,25 @@ function StudentsPageContent() {
                           </TableCell>
                         </TableRow>
                       ))}
+                      {tuitionRows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                            Không có học viên nào trong danh sách học phí tháng này.
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
                     </TableBody>
                   </Table>
+                  <TablePaginationBar
+                    totalItems={tuitionRows.length}
+                    currentPage={tuitionPage}
+                    pageSize={tuitionPageSize}
+                    onPageChange={setTuitionPage}
+                    onPageSizeChange={(size) => {
+                      setTuitionPageSize(size);
+                      setTuitionPage(1);
+                    }}
+                  />
                   <div className="mt-3 space-y-2 rounded-b-xl border-t border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                     <div className="flex items-center justify-between">
                       <span className="font-medium">Tổng học phí ước tính</span>
@@ -3264,6 +3457,81 @@ function StudentDetailPanel({
   );
 }
 
+function TablePaginationBar({
+  totalItems,
+  currentPage,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  totalItems: number;
+  currentPage: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+}) {
+  if (totalItems === 0) return null;
+
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(totalItems / pageSize)) : 1;
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = pageSize > 0 ? (safePage - 1) * pageSize + 1 : 1;
+  const endIndex = pageSize > 0 ? Math.min(totalItems, safePage * pageSize) : totalItems;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-2.5 text-xs text-slate-600">
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          Hiển thị <strong className="text-slate-900">{startIndex}</strong> - <strong className="text-slate-900">{endIndex}</strong> / <strong className="text-slate-900">{totalItems}</strong> học viên
+        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-slate-500">Số dòng/trang:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              onPageSizeChange(Number(e.target.value));
+              onPageChange(1);
+            }}
+            className="h-7 rounded-md border border-slate-300 bg-white px-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
+          >
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+            <option value={0}>Tất cả ({totalItems})</option>
+          </select>
+        </div>
+      </div>
+
+      {pageSize > 0 && totalPages > 1 ? (
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            disabled={safePage <= 1}
+            onClick={() => onPageChange(safePage - 1)}
+          >
+            Trước
+          </Button>
+          <span className="px-2 font-medium text-slate-800">
+            Trang {safePage} / {totalPages}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            disabled={safePage >= totalPages}
+            onClick={() => onPageChange(safePage + 1)}
+          >
+            Sau
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StudentTable({
   students,
   selectedStudentId,
@@ -3277,12 +3545,27 @@ function StudentTable({
   onSelect,
   getTrialDaysLeft,
 }: StudentTableProps) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
+  useEffect(() => {
+    setPage(1);
+  }, [students.length, reportBMonthFilter, reportBYearFilter, leaveDateFilter]);
+
+  const paginatedStudents = useMemo(() => {
+    if (pageSize <= 0) return students;
+    const totalPages = Math.max(1, Math.ceil(students.length / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    return students.slice(start, start + pageSize);
+  }, [students, page, pageSize]);
+
   const totalColumns = 7 + (showReportB ? 1 : 0) + (showLeaveDate ? 1 : 0) + (showTrialCountdown ? 1 : 0);
 
   const isEnrollmentVisibleByReportBFilter = useCallback((enrollment: ApiStudent['enrollments'][0], student: ApiStudent) => {
     if (showLeaveDate) {
       if (!leaveDateFilter) return true;
-      return Boolean(enrollment.endDate && enrollment.endDate.slice(0, 7) === leaveDateFilter);
+      return Boolean(enrollment.endDate && toMonthKey(enrollment.endDate) === leaveDateFilter);
     }
 
     if (!reportBMonthFilter || reportBMonthFilter === 'all' && (!reportBYearFilter || reportBYearFilter === 'all')) return true;
@@ -3311,6 +3594,7 @@ function StudentTable({
   const totalEnrollmentCount = mathEnrollmentCount + eflEnrollmentCount;
 
   return (
+    <div>
     <Table>
       <TableHeader>
         <TableRow>
@@ -3327,7 +3611,7 @@ function StudentTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {students.map((student) => {
+        {paginatedStudents.map((student) => {
           const daysLeft = showTrialCountdown && getTrialDaysLeft ? getTrialDaysLeft(student) : null;
           const isTrialExpiredByCountdown = showTrialCountdown && daysLeft !== null && daysLeft < 0;
           const displayedStatus = isTrialExpiredByCountdown ? STATUS_EXPIRED : student.status;
@@ -3443,5 +3727,13 @@ function StudentTable({
         </TableRow>
       </TableBody>
     </Table>
+    <TablePaginationBar
+      totalItems={students.length}
+      currentPage={page}
+      pageSize={pageSize}
+      onPageChange={setPage}
+      onPageSizeChange={setPageSize}
+    />
+    </div>
   );
 }

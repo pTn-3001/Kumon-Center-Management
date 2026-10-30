@@ -404,7 +404,6 @@ export async function ensureWorksheetLoanReminders(centerId: number) {
       },
     },
     orderBy: { usedAt: 'desc' },
-    take: 300,
   });
 
   const returnUsages = await prisma.worksheetUsage.findMany({
@@ -413,7 +412,6 @@ export async function ensureWorksheetLoanReminders(centerId: number) {
       note: { contains: '[WS_RETURN]' },
     },
     select: { note: true },
-    take: 300,
   });
 
   const returnedLoanIds = new Set<number>();

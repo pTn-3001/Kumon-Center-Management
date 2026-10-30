@@ -28,7 +28,7 @@ export function parseDateInput(value: unknown) {
 export async function ensureDefaultCenter() {
   return prisma.center.upsert({
     where: { id: DEFAULT_CENTER_ID },
-    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-DIAN', name: 'Kumon Dĩ An' },
-    update: {},
+    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-GIAHOA', name: 'Kumon Gia Hòa' },
+    update: { name: 'Kumon Gia Hòa' },
   });
 }

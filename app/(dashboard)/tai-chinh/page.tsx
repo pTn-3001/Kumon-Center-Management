@@ -154,6 +154,21 @@ function isRevenueItem(item: Pick<ApiFinanceItem, 'note'>) {
   return note.startsWith('[TUITION]') || note.startsWith('[ADMISSION_FEE]');
 }
 
+function getFinanceItemMonthKey(item: Pick<ApiFinanceItem, 'spentAt' | 'note'>) {
+  const note = item.note ?? '';
+  if (note.startsWith('[TUITION]')) {
+    const match = /month=(\d{4})-(\d{1,2})/.exec(note);
+    if (match) {
+      return `${match[1]}-${match[2].padStart(2, '0')}`;
+    }
+  }
+  const d = new Date(item.spentAt);
+  if (!Number.isNaN(d.getTime())) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  return item.spentAt.slice(0, 7);
+}
+
 export default function FinancePage() {
   const today = useMemo(() => new Date(), []);
   const defaultSalaryMonth = useMemo(() => getPreviousMonthKey(today), [today]);
@@ -237,10 +252,13 @@ export default function FinancePage() {
     }
   }, [note, salaryAmountTouched, salaryMonth, salaryNoteTouched, salaryStaffId, staffItems, type]);
 
-  const currentMonthKey = useMemo(() => today.toISOString().slice(0, 7), [today]);
+  const currentMonthKey = useMemo(
+    () => `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`,
+    [today]
+  );
 
   const currentMonthItems = useMemo(
-    () => items.filter((item) => item.spentAt.slice(0, 7) === currentMonthKey),
+    () => items.filter((item) => getFinanceItemMonthKey(item) === currentMonthKey),
     [currentMonthKey, items]
   );
 
@@ -252,7 +270,7 @@ export default function FinancePage() {
         return false;
       }
 
-      return item.spentAt.slice(0, 7) === expenseFilterPeriod;
+      return getFinanceItemMonthKey(item) === expenseFilterPeriod;
     });
   }, [expenseFilterPeriod, items]);
 
@@ -289,7 +307,7 @@ export default function FinancePage() {
     const monthMap = new Map<string, { month: string; revenue: number; expense: number }>();
 
     items.forEach((item) => {
-      const monthKey = item.spentAt.slice(0, 7);
+      const monthKey = getFinanceItemMonthKey(item);
       const [yearText, monthText] = monthKey.split('-');
       const monthLabel = `T${Number(monthText)}/${yearText}`;
       const current = monthMap.get(monthKey) ?? { month: monthLabel, revenue: 0, expense: 0 };

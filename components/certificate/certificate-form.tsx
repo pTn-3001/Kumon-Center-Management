@@ -28,6 +28,16 @@ interface CertificateFormProps {
   onSaved: () => Promise<void>;
 }
 
+function normalizeVietnamese(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .trim();
+}
+
 export function CertificateForm({ onSaved }: CertificateFormProps) {
   const [students, setStudents] = useState<CertificateStudentSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -76,15 +86,22 @@ export function CertificateForm({ onSaved }: CertificateFormProps) {
   }, []);
 
   const filteredStudents = useMemo(() => {
-    const keyword = studentName.toLowerCase();
+    const rawKeyword = studentName.trim();
+    if (!rawKeyword) {
+      return students.slice(0, 20);
+    }
+
+    const keyword = rawKeyword.toLowerCase();
+    const normalizedKeyword = normalizeVietnamese(rawKeyword);
+
     return students
       .filter((student) => {
-        const nameMatches = student.fullName.toLowerCase().includes(keyword);
-        const subjectMatches = !student.latestSubject || student.latestSubject === subjectCode;
-        return keyword.length > 0 && nameMatches && subjectMatches;
+        const name = student.fullName.toLowerCase();
+        const normalizedName = normalizeVietnamese(student.fullName);
+        return name.includes(keyword) || normalizedName.includes(normalizedKeyword);
       })
-      .slice(0, 6);
-  }, [students, subjectCode, studentName]);
+      .slice(0, 25);
+  }, [students, studentName]);
 
   const submitCertificate = async (action: 'preview' | 'download' | 'print') => {
     const isValid = await form.trigger();

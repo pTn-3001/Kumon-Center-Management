@@ -130,7 +130,10 @@ export async function GET(request: NextRequest) {
         },
       },
     }),
-    prisma.assessmentRecord.findMany({ orderBy: { testDate: 'desc' }, take: 100 }),
+    prisma.assessmentRecord.findMany({
+      where: studentId ? { studentId, student: { centerId: DEFAULT_CENTER_ID } } : { student: { centerId: DEFAULT_CENTER_ID } },
+      orderBy: { testDate: 'desc' },
+    }),
     prisma.worksheetBatch.findMany({ where: { centerId: DEFAULT_CENTER_ID }, orderBy: { receivedAt: 'desc' } }),
     prisma.worksheetUsage.findMany({ where: { batch: { centerId: DEFAULT_CENTER_ID } }, orderBy: { usedAt: 'desc' } }),
     prisma.personalSchedule.findMany({ where: scheduleWhere, orderBy: { scheduledAt: 'desc' } }),

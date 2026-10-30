@@ -61,7 +61,6 @@ export async function GET(request: NextRequest) {
     const certificates: CertificateRecordRow[] = await prisma.certificateRecord.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      ...(where.receivedAt ? {} : { take: 50 }),
     });
 
     return NextResponse.json(
@@ -90,18 +89,23 @@ export async function POST(request: NextRequest) {
 
   const center = await prisma.center.upsert({
     where: { id: DEFAULT_CENTER_ID },
-    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-DIAN', name: 'Kumon Dĩ An' },
-    update: {},
+    create: { id: DEFAULT_CENTER_ID, code: 'KUMON-GIAHOA', name: 'Kumon Gia Hòa' },
+    update: { name: 'Kumon Gia Hòa' },
   });
 
   const certificateLevel = body.size === 'large' && !body.level ? 'I' : (body.level || 'I');
   const nextLevel = getNextLevel(certificateLevel, body.subjectCode);
   const receivedAt = parseVietnameseDateInput(body.receivedAt);
 
+  const trimmedStudentName = String(body.studentName ?? '').trim();
+
   const existingStudent = await prisma.student.findFirst({
     where: {
       centerId: center.id,
-      fullName: body.studentName,
+      fullName: {
+        equals: trimmedStudentName,
+        mode: 'insensitive',
+      },
     },
     include: {
       enrollments: true,
@@ -122,7 +126,7 @@ export async function POST(request: NextRequest) {
     data: {
       centerId: center.id,
       studentId: student.id,
-      studentName: body.studentName,
+      studentName: student.fullName,
       subjectCode: body.subjectCode,
       size: body.size.toUpperCase() as 'SMALL' | 'LARGE',
       level: certificateLevel,

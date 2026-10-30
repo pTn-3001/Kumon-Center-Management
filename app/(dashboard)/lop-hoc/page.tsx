@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SearchableStudentSelect } from '@/components/ui/searchable-student-select';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ChuyenCanTab } from '@/components/lop-hoc/chuyen-can-tab';
 import { formatDate, formatTime24 } from '@/lib/utils';
 import { CLASS_SHIFT_OPTIONS, formatClassShiftByWeekday } from '@/lib/kumon';
 import type { ClassShift, SubjectCode, Weekday } from '@/types';
@@ -86,7 +87,7 @@ type ClassPayload = {
 };
 
 const chartColors = ['#2ca39d', '#d97706', '#ef4444', '#334155'];
-const classTabs = ['quan-ly', 'lich-su'] as const;
+const classTabs = ['quan-ly', 'lich-su', 'chuyen-can'] as const;
 
 type ClassTab = typeof classTabs[number];
 
@@ -1068,6 +1069,10 @@ function ClassPageContent() {
               </Table>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="chuyen-can" className="space-y-6">
+          <ChuyenCanTab initialStudentId={selectedStudentFromQuery} />
         </TabsContent>
       </Tabs>
 

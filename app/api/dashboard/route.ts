@@ -249,23 +249,33 @@ export async function GET(request: Request) {
       0,
     );
 
+  function getFinanceMonthKey(item: Pick<Finance, 'spentAt' | 'note'>) {
+    const note = item.note || '';
+    if (note.startsWith('[TUITION]')) {
+      const match = /month=(\d{4})-(\d{1,2})/.exec(note);
+      if (match) {
+        return `${match[1]}-${match[2].padStart(2, '0')}`;
+      }
+    }
+    return `${item.spentAt.getFullYear()}-${String(item.spentAt.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  const financeByMonth = new Map<string, Array<{ amount: number; note: string | null }>>();
+  finance.forEach((item) => {
+    const key = getFinanceMonthKey(item);
+    const current = financeByMonth.get(key) ?? [];
+    current.push({ amount: Number(item.amount), note: item.note });
+    financeByMonth.set(key, current);
+  });
+
   const monthlyStats = months.map((month) => {
-    const inMonthFinance = finance
-      .filter((item: Pick<Finance, 'id' | 'type' | 'amount' | 'spentAt' | 'note'>) => item.spentAt >= month.start && item.spentAt < month.end)
-      .map((item) => ({ amount: Number(item.amount), note: item.note }));
+    const monthKey = `${month.start.getFullYear()}-${String(month.start.getMonth() + 1).padStart(2, '0')}`;
+    const inMonthFinance = financeByMonth.get(monthKey) ?? [];
 
     return {
       ...buildMonthlyPoint(month.label, month.end, inMonthFinance, enrollments),
       totalLessons: attendanceCount,
     };
-  });
-
-  const financeByMonth = new Map<string, Array<{ amount: number; note: string | null }>>();
-  finance.forEach((item) => {
-    const key = `${item.spentAt.getFullYear()}-${String(item.spentAt.getMonth() + 1).padStart(2, '0')}`;
-    const current = financeByMonth.get(key) ?? [];
-    current.push({ amount: Number(item.amount), note: item.note });
-    financeByMonth.set(key, current);
   });
 
   const enrollmentYears = enrollments.map((item) => item.startDate.getFullYear());

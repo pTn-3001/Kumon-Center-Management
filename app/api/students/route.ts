@@ -1,54 +1,61 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { DEFAULT_CENTER_ID } from '@/lib/api-helpers';
 import type { CertificateStudentSuggestion } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type StudentRow = {
-  id: number;
-  fullName: string;
-  enrollments: Array<{
-    subjectCode: 'MATH' | 'EFL';
-    currentLevel: string | null;
-  }>;
-  certificates: Array<{
-    level: string | null;
-    subjectCode: 'MATH' | 'EFL';
-  }>;
-};
-
 export async function GET() {
-  const students: StudentRow[] = await prisma.student.findMany({
+  const students = await prisma.student.findMany({
     where: {
+      centerId: DEFAULT_CENTER_ID,
       OR: [
         { status: { in: ['OFFICIAL', 'TRIAL'] } },
-        { enrollments: { some: { endDate: null } } },
+        { status: { notIn: ['DROPPED', 'EXPIRED'] } },
+        { enrollments: { some: {} } },
       ],
     },
     orderBy: { fullName: 'asc' },
-    include: {
+    select: {
+      id: true,
+      fullName: true,
       enrollments: {
-        where: { endDate: null },
-        select: { subjectCode: true, currentLevel: true },
+        select: {
+          subjectCode: true,
+          currentLevel: true,
+          startDate: true,
+          endDate: true,
+        },
+        orderBy: { startDate: 'desc' },
       },
       certificates: {
         orderBy: { receivedAt: 'desc' },
-        take: 1,
+        select: {
+          level: true,
+          subjectCode: true,
+        },
       },
     },
   });
 
-  const suggestions: CertificateStudentSuggestion[] = students.map((student: StudentRow) => ({
-    id: student.id,
-    fullName: student.fullName,
-    currentLevels: {
-      MATH: student.enrollments.find((item) => item.subjectCode === 'MATH')?.currentLevel ?? null,
-      EFL: student.enrollments.find((item) => item.subjectCode === 'EFL')?.currentLevel ?? null,
-    },
-    latestLevel: student.certificates[0]?.level ?? null,
-    latestSubject: student.certificates[0]?.subjectCode ?? null,
-  }));
+  const suggestions: CertificateStudentSuggestion[] = students.map((student: (typeof students)[number]) => {
+    const mathEnrollment = student.enrollments.find((e: (typeof student.enrollments)[number]) => e.subjectCode === 'MATH');
+    const eflEnrollment = student.enrollments.find((e: (typeof student.enrollments)[number]) => e.subjectCode === 'EFL');
+
+    const latestCert = student.certificates[0] ?? null;
+
+    return {
+      id: student.id,
+      fullName: student.fullName,
+      currentLevels: {
+        MATH: mathEnrollment?.currentLevel ?? null,
+        EFL: eflEnrollment?.currentLevel ?? null,
+      },
+      latestLevel: latestCert?.level ?? null,
+      latestSubject: latestCert?.subjectCode ?? null,
+    };
+  });
 
   return NextResponse.json(suggestions);
 }

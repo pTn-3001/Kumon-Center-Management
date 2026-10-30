@@ -47,6 +47,7 @@ const mainNav: NavItem[] = [
     children: [
       { href: '/lop-hoc?tab=quan-ly', label: 'Quản lý lớp học', tab: 'quan-ly' },
       { href: '/lop-hoc?tab=lich-su', label: 'Lịch sử điểm danh', tab: 'lich-su' },
+      { href: '/lop-hoc?tab=chuyen-can', label: 'Chấm điểm chuyên cần', tab: 'chuyen-can' },
     ],
   },
   {

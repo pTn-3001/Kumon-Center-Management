@@ -142,7 +142,6 @@ export async function GET(request: NextRequest) {
         rows = await (prisma as any).staffTimeEntry.findMany({
           where: { staffId: { in: staffIds } },
           orderBy: [{ workDate: 'desc' }, { clockIn: 'desc' }],
-          take: 500,
         });
       } catch {
         rows = [];
