@@ -272,33 +272,50 @@ export async function ensurePreClassAttendanceReminderNotifications(centerId: nu
   type AttendancePresenceRow = (typeof attendances)[number];
 
   const presentStudentIds = new Set(attendances.map((item: AttendancePresenceRow) => item.studentId));
-  await Promise.all(
-    reminderCandidates
-      .filter((item: PreClassEnrollmentRow) => {
-        return !presentStudentIds.has(item.studentId);
-      })
-      .map((item: PreClassEnrollmentRow) => {
-        const normalizedShift = item.resolvedClassShift;
-        if (!normalizedShift) {
-          return null;
-        }
+  const notificationsToCreate = reminderCandidates
+    .filter((item: PreClassEnrollmentRow) => !presentStudentIds.has(item.studentId))
+    .map((item: PreClassEnrollmentRow) => {
+      const normalizedShift = item.resolvedClassShift;
+      if (!normalizedShift) {
+        return null;
+      }
 
-        const shiftRange = getShiftTimeRange(weekday, normalizedShift);
-        if (!shiftRange) {
-          return null;
-        }
+      const shiftRange = getShiftTimeRange(weekday, normalizedShift);
+      if (!shiftRange) {
+        return null;
+      }
 
-        return createNotification({
-          centerId,
-          type: 'POST_CLASS_ATTENDANCE_REMINDER',
-          title: 'Nhắc nhở điểm danh',
-          message: `${item.student.fullName} chưa điểm danh ${item.resolvedClassLabel}.`,
-          targetRoles: ['ADMIN', 'CONSULTANT'],
-          eventKey: `POST_CLASS_ATTENDANCE_${item.resolvedClassGroupId ?? `${item.subjectCode}_${weekday}_${normalizedShift}`}_${item.studentId}_${todayKey}`,
-        });
-      })
-      .filter((item: Promise<void> | null): item is Promise<void> => Boolean(item))
-  );
+      return {
+        centerId,
+        type: 'POST_CLASS_ATTENDANCE_REMINDER',
+        title: 'Nhắc nhở điểm danh',
+        message: `${item.student.fullName} chưa điểm danh ${item.resolvedClassLabel}.`,
+        targetRoles: ['ADMIN', 'CONSULTANT'] as NotificationRole[],
+        eventKey: `POST_CLASS_ATTENDANCE_${item.resolvedClassGroupId ?? `${item.subjectCode}_${weekday}_${normalizedShift}`}_${item.studentId}_${todayKey}`,
+      };
+    })
+    .filter((item: {
+      centerId: number;
+      type: string;
+      title: string;
+      message: string;
+      targetRoles: NotificationRole[];
+      eventKey: string;
+    } | null): item is {
+      centerId: number;
+      type: string;
+      title: string;
+      message: string;
+      targetRoles: NotificationRole[];
+      eventKey: string;
+    } => Boolean(item));
+
+  if (notificationsToCreate.length > 0) {
+    await prisma.notification.createMany({
+      data: notificationsToCreate,
+      skipDuplicates: true,
+    });
+  }
 }
 
 export async function ensureLowStockNotifications(centerId: number) {

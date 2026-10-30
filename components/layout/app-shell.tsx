@@ -17,14 +17,18 @@ interface AppShellProps {
   subtitle?: string;
 }
 
+let cachedSessionUser: { fullName: string; role: string } | null = null;
+let cachedNotifications: Array<{ id: number; title: string; message: string; createdAt: string; read: boolean }> = [];
+let cachedUnreadCount = 0;
+
 export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý trung tâm Kumon' }: AppShellProps) {
   const router = useRouter();
-  const [sessionUser, setSessionUser] = useState<{ fullName: string; role: string } | null>(null);
+  const [sessionUser, setSessionUser] = useState<{ fullName: string; role: string } | null>(() => cachedSessionUser);
   const [menuOpen, setMenuOpen] = useState(false);
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string; createdAt: string; read: boolean }>>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<Array<{ id: number; title: string; message: string; createdAt: string; read: boolean }>>(() => cachedNotifications);
+  const [unreadCount, setUnreadCount] = useState(() => cachedUnreadCount);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -44,6 +48,8 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
       unreadCount: number;
       items: Array<{ id: number; title: string; message: string; createdAt: string; read: boolean }>;
     };
+    cachedUnreadCount = payload.unreadCount;
+    cachedNotifications = payload.items;
     setUnreadCount(payload.unreadCount);
     setNotifications(payload.items);
   }, []);
@@ -60,11 +66,13 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
     const loadSession = async () => {
       const response = await fetch('/api/auth/session', { cache: 'no-store' });
       if (!response.ok) {
+        cachedSessionUser = null;
         setSessionUser(null);
         return;
       }
 
       const payload = (await response.json()) as { user?: { fullName: string; role: string } };
+      cachedSessionUser = payload.user ?? null;
       setSessionUser(payload.user ?? null);
     };
 
@@ -75,7 +83,7 @@ export function AppShell({ children, title = 'Dashboard', subtitle = 'Quản lý
     void loadNotifications();
     const timer = setInterval(() => {
       void loadNotifications();
-    }, 10000);
+    }, 60000);
     return () => clearInterval(timer);
   }, [loadNotifications]);
 

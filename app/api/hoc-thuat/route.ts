@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const [students, assessments, worksheetBatches, worksheetUsages, personalSchedules, attendances] = await Promise.all([
+  const [students, assessments, worksheetBatches, worksheetUsages, personalSchedules, attendances, classGroups] = await Promise.all([
     prisma.student.findMany({
       where: { centerId: DEFAULT_CENTER_ID },
       orderBy: { fullName: 'asc' },
@@ -140,15 +140,21 @@ export async function GET(request: NextRequest) {
     prisma.attendance.findMany({
       where: attendanceWhere,
       orderBy: { date: 'desc' },
-      include: { classGroup: { select: { id: true, label: true, subjectCode: true } } },
+    }),
+    prisma.classGroup.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      select: { id: true, label: true, subjectCode: true },
     }),
   ]);
 
+  const classGroupById = new Map<number, { id: number; label: string; subjectCode: string }>(
+    classGroups.map((cg: any) => [cg.id, cg])
+  );
   const assessmentRows = assessments as AssessmentRow[];
   const worksheetBatchRows = worksheetBatches as WorksheetBatchRow[];
   const worksheetUsageRows = worksheetUsages as WorksheetUsageRow[];
   const personalScheduleRows = personalSchedules as PersonalScheduleRow[];
-  const attendanceRows = attendances as Array<AttendanceRow & { classGroup: { id: number; label: string; subjectCode: string } }>;
+  const attendanceRows = attendances as AttendanceRow[];
 
   return NextResponse.json({
     students: students.map((student: any) => ({
@@ -193,18 +199,21 @@ export async function GET(request: NextRequest) {
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     })),
-    attendances: attendanceRows.map((item) => ({
-      id: item.id,
-      classGroupId: item.classGroupId,
-      classGroupLabel: item.classGroup.label,
-      subjectCode: fromSubjectCode(item.classGroup.subjectCode),
-      studentId: item.studentId,
-      date: item.date.toISOString(),
-      checkOutAt: item.checkOutAt?.toISOString() ?? null,
-      status: item.status === 'PRESENT' ? 'Hiện diện' : 'Vắng',
-      makeUpClassGroupId: item.makeUpClassGroupId,
-      createdAt: item.createdAt.toISOString(),
-      updatedAt: item.updatedAt.toISOString(),
-    })),
+    attendances: attendanceRows.map((item) => {
+      const cg = classGroupById.get(item.classGroupId);
+      return {
+        id: item.id,
+        classGroupId: item.classGroupId,
+        classGroupLabel: cg?.label ?? '',
+        subjectCode: fromSubjectCode(cg?.subjectCode ?? 'MATH'),
+        studentId: item.studentId,
+        date: item.date.toISOString(),
+        checkOutAt: item.checkOutAt?.toISOString() ?? null,
+        status: item.status === 'PRESENT' ? 'Hiện diện' : 'Vắng',
+        makeUpClassGroupId: item.makeUpClassGroupId,
+        createdAt: item.createdAt.toISOString(),
+        updatedAt: item.updatedAt.toISOString(),
+      };
+    }),
   });
 }

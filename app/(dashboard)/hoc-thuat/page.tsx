@@ -470,13 +470,15 @@ function toDateTimeInputValue(value: string | Date) {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+let cachedAcademicPayload: AcademicPayload | null = null;
+
 function AcademicWarehousePageContent() {
   const searchParams = useSearchParams();
-  const [data, setData] = useState<AcademicPayload | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<AcademicPayload | null>(() => cachedAcademicPayload);
+  const [loading, setLoading] = useState(() => cachedAcademicPayload === null);
   const [error, setError] = useState('');
   const [worksheetStudentSearch, setWorksheetStudentSearch] = useState('');
-  const [selectedStudentId, setSelectedStudentId] = useState<number | ''>('');
+  const [selectedStudentId, setSelectedStudentId] = useState<number | ''>(() => cachedAcademicPayload?.students[0]?.id ?? '');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [selectedCalendarMonth, setSelectedCalendarMonth] = useState<Date>(new Date());
   const [assessmentForm, setAssessmentForm] = useState(emptyAssessmentForm);
@@ -529,9 +531,10 @@ function AcademicWarehousePageContent() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        setLoading(true);
+        if (!cachedAcademicPayload) {
+          setLoading(true);
+        }
         const queryParams = new URLSearchParams();
-        if (selectedStudentId) queryParams.set('studentId', String(selectedStudentId));
         if (selectedMonthKey) queryParams.set('month', selectedMonthKey);
 
         const response = await fetch(`/api/hoc-thuat?${queryParams.toString()}`, { cache: 'no-store' });
@@ -540,20 +543,23 @@ function AcademicWarehousePageContent() {
         }
 
         const payload = (await response.json()) as AcademicPayload;
+        cachedAcademicPayload = payload;
         setData(payload);
 
         if (payload.students.length > 0) {
           setSelectedStudentId((current) => current || payload.students[0].id);
         }
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        if (!cachedAcademicPayload) {
+          setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     void loadData();
-  }, [selectedStudentId, selectedMonthKey]);
+  }, [selectedMonthKey]);
 
   useEffect(() => {
     if (!data || selectedStudentId) {
@@ -643,6 +649,23 @@ function AcademicWarehousePageContent() {
   }, [data?.worksheetBatches, data?.worksheetUsages]);
 
   const stockRowData = useMemo(() => {
+    const emptyRow: StockRow = {
+      worksheetCode: '',
+      opening: 0,
+      imported: 0,
+      used: 0,
+      generated: 0,
+      closing: 0,
+      matchedBatchIds: [],
+    };
+    if (currentTopTab !== 'kho' || currentKhoSubTab !== 'ton-kho') {
+      return {
+        rows: [] as StockRow[],
+        levelTotal: emptyRow,
+        centerTotal: emptyRow,
+      };
+    }
+
     const assignmentBatchById = new Map<number, AcademicWorksheetBatch>(
       (data?.worksheetBatches ?? []).map((batch) => [batch.id, batch])
     );
@@ -986,7 +1009,7 @@ function AcademicWarehousePageContent() {
       levelTotal: summarizeRows(currentLevelRows, `Tổng level ${stockLevel}`),
       centerTotal,
     };
-  }, [data?.worksheetBatches, data?.worksheetUsages, stockLevel, stockPeriod.nextStartKey, stockPeriod.startKey, stockSubject, worksheetInventory]);
+  }, [currentTopTab, currentKhoSubTab, data?.worksheetBatches, data?.worksheetUsages, stockLevel, stockPeriod.nextStartKey, stockPeriod.startKey, stockSubject, worksheetInventory]);
 
   const worksheetAssignmentBatchMap = useMemo(() => {
     const entries = (data?.worksheetBatches ?? [])
@@ -1159,7 +1182,6 @@ function AcademicWarehousePageContent() {
 
   async function refreshData() {
     const queryParams = new URLSearchParams();
-    if (selectedStudentId) queryParams.set('studentId', String(selectedStudentId));
     if (selectedMonthKey) queryParams.set('month', selectedMonthKey);
 
     const response = await fetch(`/api/hoc-thuat?${queryParams.toString()}`, { cache: 'no-store' });
@@ -1168,6 +1190,7 @@ function AcademicWarehousePageContent() {
     }
 
     const payload = (await response.json()) as AcademicPayload;
+    cachedAcademicPayload = payload;
     setData(payload);
   }
 

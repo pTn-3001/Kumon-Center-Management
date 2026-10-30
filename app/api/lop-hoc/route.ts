@@ -74,8 +74,34 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const dateParam = searchParams.get('date');
   const monthParam = searchParams.get('month');
+  const classesOnly = searchParams.get('classesOnly') === '1';
 
-  const attendanceWhere: any = {};
+  if (classesOnly) {
+    const classGroups: any[] = await prisma.classGroup.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      orderBy: { label: 'asc' },
+      include: {
+        teacher: { select: { id: true, fullName: true, role: true } },
+      },
+    });
+
+    return NextResponse.json({
+      classGroups: classGroups.map((group: any) => ({
+        ...group,
+        weekday: fromWeekday(group.weekday),
+        classShift: fromClassShift(group.classShift),
+        subjectCode: fromSubjectCode(group.subjectCode),
+        createdAt: group.createdAt.toISOString(),
+        updatedAt: group.updatedAt.toISOString(),
+        teacher: group.teacher ? { ...group.teacher, role: group.teacher.role } : null,
+        enrollments: [],
+      })),
+    });
+  }
+
+  const attendanceWhere: any = {
+    classGroup: { centerId: DEFAULT_CENTER_ID },
+  };
 
   if (dateParam) {
     const [year, month, day] = dateParam.split('-').map(Number);
@@ -122,9 +148,16 @@ export async function GET(request: NextRequest) {
     prisma.attendance.findMany({
       where: attendanceWhere,
       orderBy: { date: 'desc' },
-      include: {
-        classGroup: { select: { id: true, label: true } },
-        student: { select: { id: true, fullName: true } },
+      select: {
+        id: true,
+        classGroupId: true,
+        studentId: true,
+        date: true,
+        checkOutAt: true,
+        status: true,
+        makeUpClassGroupId: true,
+        createdAt: true,
+        updatedAt: true,
       },
     }),
     prisma.enrollment.findMany({
@@ -133,8 +166,17 @@ export async function GET(request: NextRequest) {
         endDate: null,
       },
       orderBy: { startDate: 'desc' },
-      include: {
-        student: { select: { id: true, fullName: true, status: true } },
+      select: {
+        id: true,
+        studentId: true,
+        classGroupId: true,
+        subjectCode: true,
+        registrationType: true,
+        enrollmentType: true,
+        studyDays: true,
+        classShift: true,
+        startDate: true,
+        endDate: true,
       },
     }),
     prisma.personalSchedule.findMany({
@@ -145,11 +187,23 @@ export async function GET(request: NextRequest) {
         },
       },
       orderBy: { scheduledAt: 'desc' },
-      include: {
-        student: { select: { id: true, fullName: true, status: true } },
+      select: {
+        id: true,
+        studentId: true,
+        subjectCode: true,
+        classShift: true,
+        scheduledAt: true,
+        note: true,
       },
     }),
   ]);
+
+  const classGroupLabelById = new Map<number, string>(
+    classGroups.map((group: any) => [group.id, group.label])
+  );
+  const studentById = new Map<number, { id: number; fullName: string; status: string }>(
+    students.map((student: any) => [student.id, { id: student.id, fullName: student.fullName, status: student.status }])
+  );
 
   function matchesEnrollmentToGroup(enrollment: any, group: any) {
     if (enrollment.subjectCode !== group.subjectCode) return false;
@@ -197,7 +251,7 @@ export async function GET(request: NextRequest) {
         classShift: fromClassShift(enrollment.classShift),
         startDate: enrollment.startDate.toISOString(),
         endDate: enrollment.endDate?.toISOString() ?? null,
-        student: enrollment.student,
+        student: studentById.get(enrollment.studentId) ?? { id: enrollment.studentId, fullName: '', status: 'OFFICIAL' },
       })),
     })),
     students: students.map((student: any) => ({
@@ -214,14 +268,18 @@ export async function GET(request: NextRequest) {
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
       status: item.status === 'ABSENT' ? 'Vắng' : 'Hiện diện',
-      classGroupLabel: item.classGroup.label,
-      makeUpClassGroupLabel: classGroups.find((group: any) => group.id === item.makeUpClassGroupId)?.label ?? null,
-      studentName: item.student.fullName,
+      classGroupLabel: classGroupLabelById.get(item.classGroupId) ?? '',
+      makeUpClassGroupLabel: item.makeUpClassGroupId ? (classGroupLabelById.get(item.makeUpClassGroupId) ?? null) : null,
+      studentName: studentById.get(item.studentId)?.fullName ?? '',
     })),
     extraClassStudents: extraSchedules
       .map((item: any) => {
         const classGroupId = parseExtraClassGroupId(item.note);
         if (!classGroupId) {
+          return null;
+        }
+        const st = studentById.get(item.studentId);
+        if (!st) {
           return null;
         }
 
@@ -234,9 +292,9 @@ export async function GET(request: NextRequest) {
           scheduledAt: item.scheduledAt.toISOString(),
           note: item.note,
           student: {
-            id: item.student.id,
-            fullName: item.student.fullName,
-            status: fromStudentStatus(item.student.status),
+            id: st.id,
+            fullName: st.fullName,
+            status: fromStudentStatus(st.status),
           },
         };
       })

@@ -76,13 +76,15 @@ const mainNav: NavItem[] = [
   { href: '/he-thong', label: 'Hệ thống', icon: Settings },
 ];
 
+let cachedSidebarRole: StaffRole | null = null;
+
 export function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeTab = searchParams.get('tab');
   const activeSubtab = searchParams.get('subtab');
   const activeKhoSubtab = searchParams.get('ksubtab');
-  const [sessionRole, setSessionRole] = useState<StaffRole | null>(null);
+  const [sessionRole, setSessionRole] = useState<StaffRole | null>(() => cachedSidebarRole);
 
   useEffect(() => {
     const loadSession = async () => {
@@ -92,6 +94,7 @@ export function Sidebar() {
       const payload = (await response.json()) as { user?: { role?: StaffRole } };
       const role = payload.user?.role;
       if (role) {
+        cachedSidebarRole = role;
         setSessionRole(role);
       }
     };

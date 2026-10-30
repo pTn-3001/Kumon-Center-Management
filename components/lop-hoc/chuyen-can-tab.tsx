@@ -86,37 +86,54 @@ interface ChuyenCanTabProps {
   initialStudentId?: string | null;
 }
 
+let cachedChuyenCanStudents: ChuyenCanStudent[] | null = null;
+
 export function ChuyenCanTab({ initialStudentId }: ChuyenCanTabProps) {
-  const [students, setStudents] = useState<ChuyenCanStudent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<ChuyenCanStudent[]>(() => cachedChuyenCanStudents ?? []);
+  const [loading, setLoading] = useState(() => cachedChuyenCanStudents === null);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Chính thức' | 'Học thử'>('ALL');
-  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<number | null>(() => {
+    if (cachedChuyenCanStudents && cachedChuyenCanStudents.length > 0) {
+      if (initialStudentId) {
+        const match = cachedChuyenCanStudents.find((s) => String(s.id) === initialStudentId);
+        if (match) return match.id;
+      }
+      return cachedChuyenCanStudents[0].id;
+    }
+    return null;
+  });
   const [selectedCycleView, setSelectedCycleView] = useState<'current' | number>('current');
   const cardPrintRef = useRef<HTMLDivElement>(null);
 
   const fetchChuyenCanData = async () => {
-    setLoading(true);
+    if (!cachedChuyenCanStudents) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const res = await fetch('/api/lop-hoc/chuyen-can');
+      const res = await fetch('/api/lop-hoc/chuyen-can', { cache: 'no-store' });
       if (!res.ok) throw new Error('Không thể tải dữ liệu chuyên cần');
       const data = await res.json();
-      setStudents(data.students || []);
+      const nextStudents: ChuyenCanStudent[] = data.students || [];
+      cachedChuyenCanStudents = nextStudents;
+      setStudents(nextStudents);
 
-      if (data.students && data.students.length > 0) {
+      if (nextStudents.length > 0) {
         if (initialStudentId) {
-          const match = data.students.find((s: ChuyenCanStudent) => String(s.id) === initialStudentId);
+          const match = nextStudents.find((s: ChuyenCanStudent) => String(s.id) === initialStudentId);
           if (match) {
             setSelectedStudentId(match.id);
             return;
           }
         }
-        setSelectedStudentId((prev) => prev ?? data.students[0].id);
+        setSelectedStudentId((prev) => prev ?? nextStudents[0].id);
       }
     } catch (err: any) {
-      setError(err.message || 'Lỗi hệ thống');
+      if (!cachedChuyenCanStudents) {
+        setError(err.message || 'Lỗi hệ thống');
+      }
     } finally {
       setLoading(false);
     }

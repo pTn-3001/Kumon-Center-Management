@@ -48,18 +48,60 @@ function fromClassShift(value: string) {
 }
 
 export async function GET() {
-  const students: any[] = await prisma.student.findMany({
-    where: { centerId: DEFAULT_CENTER_ID },
-    orderBy: { fullName: 'asc' },
-    include: {
-      assignedStaff: { select: { id: true, fullName: true } },
-      enrollments: {
-        orderBy: { startDate: 'desc' },
-        include: { classGroup: { select: { id: true, label: true, weekday: true, classShift: true } } },
+  const [students, allEnrollments, classGroups, staffList]: [any[], any[], any[], any[]] = await Promise.all([
+    prisma.student.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      orderBy: { fullName: 'asc' },
+    }),
+    prisma.enrollment.findMany({
+      where: { student: { centerId: DEFAULT_CENTER_ID } },
+      orderBy: { startDate: 'desc' },
+    }),
+    prisma.classGroup.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      select: { id: true, label: true, weekday: true, classShift: true },
+    }),
+    prisma.staff.findMany({
+      where: { centerId: DEFAULT_CENTER_ID },
+      select: { id: true, fullName: true },
+    }),
+  ]);
+
+  const classGroupById = new Map<number, any>(
+    classGroups.map((cg: any) => [
+      cg.id,
+      {
+        id: cg.id,
+        label: cg.label,
+        weekday: cg.weekday,
+        classShift: fromClassShift(cg.classShift),
       },
-      certificates: { orderBy: { receivedAt: 'desc' }, take: 1 },
-    },
-  });
+    ])
+  );
+  const staffNameById = new Map<number, string>(
+    staffList.map((s: any) => [s.id, s.fullName])
+  );
+  const enrollmentsByStudentId = new Map<number, any[]>();
+  for (const enrollment of allEnrollments) {
+    const formatted = {
+      ...enrollment,
+      registrationType: fromRegistrationType(enrollment.registrationType),
+      enrollmentType: fromEnrollmentType(enrollment.enrollmentType),
+      classShift: fromClassShift(enrollment.classShift),
+      currentLevel: enrollment.currentLevel ?? null,
+      startDate: enrollment.startDate.toISOString(),
+      reportBDate: enrollment.reportBDate?.toISOString() ?? null,
+      reenrollDate: enrollment.reenrollDate?.toISOString() ?? null,
+      endDate: enrollment.endDate?.toISOString() ?? null,
+      classGroup: enrollment.classGroupId ? (classGroupById.get(enrollment.classGroupId) ?? null) : null,
+    };
+    const list = enrollmentsByStudentId.get(enrollment.studentId);
+    if (list) {
+      list.push(formatted);
+    } else {
+      enrollmentsByStudentId.set(enrollment.studentId, [formatted]);
+    }
+  }
 
   return NextResponse.json(
     students.map((student: any) => ({
@@ -71,37 +113,12 @@ export async function GET() {
       createdAt: student.createdAt.toISOString(),
       updatedAt: student.updatedAt.toISOString(),
       assignedStaffId: student.assignedStaffId,
-      assignedStaffName: student.assignedStaff?.fullName ?? null,
+      assignedStaffName: student.assignedStaffId ? (staffNameById.get(student.assignedStaffId) ?? null) : null,
       status: fromStudentStatus(student.status),
       gender: fromGender(student.gender),
       reportBDate: student.reportBDate?.toISOString() ?? null,
-      enrollments: student.enrollments.map((enrollment: any) => ({
-        ...enrollment,
-        registrationType: fromRegistrationType(enrollment.registrationType),
-        enrollmentType: fromEnrollmentType(enrollment.enrollmentType),
-        classShift: fromClassShift(enrollment.classShift),
-        currentLevel: enrollment.currentLevel ?? null,
-        startDate: enrollment.startDate.toISOString(),
-        reportBDate: enrollment.reportBDate?.toISOString() ?? null,
-        reenrollDate: enrollment.reenrollDate?.toISOString() ?? null,
-        endDate: enrollment.endDate?.toISOString() ?? null,
-        classGroup: enrollment.classGroup
-          ? {
-              id: enrollment.classGroup.id,
-              label: enrollment.classGroup.label,
-              weekday: enrollment.classGroup.weekday,
-              classShift: fromClassShift(enrollment.classGroup.classShift),
-            }
-          : null,
-      })),
-      latestCertificate: student.certificates[0]
-        ? {
-            id: student.certificates[0].id,
-            subjectCode: student.certificates[0].subjectCode,
-            level: student.certificates[0].level,
-            receivedAt: student.certificates[0].receivedAt.toISOString(),
-          }
-        : null,
+      enrollments: enrollmentsByStudentId.get(student.id) ?? [],
+      latestCertificate: null,
     }))
   );
 }

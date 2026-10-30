@@ -346,13 +346,17 @@ function calculateStudentTuitionForMonth(
   ), 0);
 }
 
+let cachedStudentsData: ApiStudent[] | null = null;
+let cachedClassGroupsData: ApiClassGroup[] | null = null;
+let cachedFinanceItemsData: ApiFinanceItem[] | null = null;
+
 function StudentsPageContent() {
   const searchParams = useSearchParams();
 
-  const [students, setStudents] = useState<ApiStudent[]>([]);
-  const [classGroups, setClassGroups] = useState<ApiClassGroup[]>([]);
-  const [financeItems, setFinanceItems] = useState<ApiFinanceItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [students, setStudents] = useState<ApiStudent[]>(() => cachedStudentsData ?? []);
+  const [classGroups, setClassGroups] = useState<ApiClassGroup[]>(() => cachedClassGroupsData ?? []);
+  const [financeItems, setFinanceItems] = useState<ApiFinanceItem[]>(() => cachedFinanceItemsData ?? []);
+  const [loading, setLoading] = useState(() => cachedStudentsData === null);
   const [error, setError] = useState('');
 
   const [search, setSearch] = useState('');
@@ -459,23 +463,31 @@ function StudentsPageContent() {
       try {
         const [studentsRes, classesRes, financeRes] = await Promise.all([
           fetch('/api/hoc-vien', { cache: 'no-store' }),
-          fetch('/api/lop-hoc', { cache: 'no-store' }),
+          fetch('/api/lop-hoc?classesOnly=1', { cache: 'no-store' }),
           fetch('/api/tai-chinh', { cache: 'no-store' }),
         ]);
 
         if (!studentsRes.ok) throw new Error('Không thể tải danh sách học viên');
-        setStudents((await studentsRes.json()) as ApiStudent[]);
+        const nextStudents = (await studentsRes.json()) as ApiStudent[];
+        cachedStudentsData = nextStudents;
+        setStudents(nextStudents);
 
         if (classesRes.ok) {
           const classPayload = (await classesRes.json()) as { classGroups?: ApiClassGroup[] };
-          setClassGroups(classPayload.classGroups ?? []);
+          const nextClasses = classPayload.classGroups ?? [];
+          cachedClassGroupsData = nextClasses;
+          setClassGroups(nextClasses);
         }
 
         if (financeRes.ok) {
-          setFinanceItems((await financeRes.json()) as ApiFinanceItem[]);
+          const nextFinance = (await financeRes.json()) as ApiFinanceItem[];
+          cachedFinanceItemsData = nextFinance;
+          setFinanceItems(nextFinance);
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Co loi xay ra');
+        if (!cachedStudentsData) {
+          setError(e instanceof Error ? e.message : 'Co loi xay ra');
+        }
       } finally {
         setLoading(false);
       }
@@ -754,12 +766,13 @@ function StudentsPageContent() {
   }
 
   const birthdayList = useMemo(() => {
+    if (currentTab !== 'sinh-nhat') return [];
     const currentMonth = new Date().getMonth();
     return students
       .filter((s) => s.birthDate && parseISO(s.birthDate).getMonth() === currentMonth)
       .map((s) => ({ ...s, ...getBirthdayInfo(s.birthDate ?? s.admissionDate) }))
       .sort((a, b) => a.daysUntil - b.daysUntil);
-  }, [students]);
+  }, [students, currentTab]);
 
   const stats = useMemo(() => {
     const officialEnrollmentCount = officialStudents.reduce((total, student) => total + student.enrollments.length, 0);
@@ -886,6 +899,9 @@ function StudentsPageContent() {
   ), []);
 
   const tuitionRows = useMemo(() => {
+    if (currentTab !== 'chua-thu-hoc-phi' && !tuitionDialogOpen && !revertConfirmDialogOpen) {
+      return [];
+    }
     return students
       .map((student) => {
         const key = `${student.id}-${selectedFilterMonthKey}`;
@@ -950,7 +966,7 @@ function StudentsPageContent() {
         return !item.paid;
       })
       .sort((a, b) => Number(a.paid) - Number(b.paid));
-  }, [students, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
+  }, [currentTab, tuitionDialogOpen, revertConfirmDialogOpen, students, paidMap, tuitionPaymentDetailsMap, selectedFilterMonthKey, matchesSearch, tuitionStatusFilter]);
 
   const [tuitionPage, setTuitionPage] = useState(1);
   const [tuitionPageSize, setTuitionPageSize] = useState(50);
@@ -1015,7 +1031,9 @@ function StudentsPageContent() {
   async function refreshStudents() {
     const response = await fetch('/api/hoc-vien', { cache: 'no-store' });
     if (!response.ok) throw new Error('Không thể tải danh sách học viên');
-    setStudents((await response.json()) as ApiStudent[]);
+    const nextStudents = (await response.json()) as ApiStudent[];
+    cachedStudentsData = nextStudents;
+    setStudents(nextStudents);
   }
 
   async function refreshFinanceItems() {
@@ -1023,7 +1041,9 @@ function StudentsPageContent() {
     if (!response.ok) {
       throw new Error('Không thể tải dữ liệu học phí');
     }
-    setFinanceItems((await response.json()) as ApiFinanceItem[]);
+    const nextFinance = (await response.json()) as ApiFinanceItem[];
+    cachedFinanceItemsData = nextFinance;
+    setFinanceItems(nextFinance);
   }
 
   function parseStudyDays(studyDays: string, fallbackShift: ShiftOption): { selectedWeekdays: Weekday[]; shiftsByWeekday: Partial<Record<Weekday, ShiftOption>> } {

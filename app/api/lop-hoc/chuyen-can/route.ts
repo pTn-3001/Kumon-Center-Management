@@ -159,23 +159,30 @@ export async function GET(request: NextRequest) {
         select: {
           id: true,
           studentId: true,
+          classGroupId: true,
           date: true,
-          classGroup: {
-            select: {
-              id: true,
-              label: true,
-              subjectCode: true,
-            },
-          },
         },
       }),
     ]);
 
+    const classGroupById = new Map<number, { id: number; label: string; subjectCode: string }>(
+      classGroups.map((cg: any) => [cg.id, { id: cg.id, label: cg.label, subjectCode: cg.subjectCode }])
+    );
+
     // Group attendances by studentId
-    const attendancesByStudent = new Map<number, Array<(typeof attendances)[number]>>();
+    const attendancesByStudent = new Map<number, Array<{
+      id: number;
+      studentId: number;
+      classGroupId: number;
+      date: Date;
+      classGroup: { id: number; label: string; subjectCode: string } | null;
+    }>>();
     for (const att of attendances) {
       const list = attendancesByStudent.get(att.studentId) ?? [];
-      list.push(att);
+      list.push({
+        ...att,
+        classGroup: classGroupById.get(att.classGroupId) ?? null,
+      });
       attendancesByStudent.set(att.studentId, list);
     }
 

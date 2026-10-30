@@ -169,12 +169,15 @@ function getFinanceItemMonthKey(item: Pick<ApiFinanceItem, 'spentAt' | 'note'>) 
   return item.spentAt.slice(0, 7);
 }
 
+let cachedFinancePayload: ApiFinancePayload | null = null;
+let cachedStaffPayload: ApiStaffItem[] | null = null;
+
 export default function FinancePage() {
   const today = useMemo(() => new Date(), []);
   const defaultSalaryMonth = useMemo(() => getPreviousMonthKey(today), [today]);
-  const [items, setItems] = useState<ApiFinancePayload>([]);
-  const [staffItems, setStaffItems] = useState<ApiStaffItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<ApiFinancePayload>(() => cachedFinancePayload ?? []);
+  const [staffItems, setStaffItems] = useState<ApiStaffItem[]>(() => cachedStaffPayload ?? []);
+  const [loading, setLoading] = useState(() => cachedFinancePayload === null);
   const [error, setError] = useState('');
   const [type, setType] = useState<FinanceType>('Lương');
   const [amount, setAmount] = useState('');
@@ -196,7 +199,9 @@ export default function FinancePage() {
   const loadStaffItems = async () => {
     const staffRes = await fetch('/api/he-thong/staff', { cache: 'no-store' });
     if (!staffRes.ok) return;
-    setStaffItems((await staffRes.json()) as ApiStaffItem[]);
+    const nextStaff = (await staffRes.json()) as ApiStaffItem[];
+    cachedStaffPayload = nextStaff;
+    setStaffItems(nextStaff);
   };
 
   useEffect(() => {
@@ -210,13 +215,19 @@ export default function FinancePage() {
         if (!financeRes.ok) {
           throw new Error('Không thể tải dữ liệu tài chính');
         }
-        setItems((await financeRes.json()) as ApiFinancePayload);
+        const nextFinance = (await financeRes.json()) as ApiFinancePayload;
+        cachedFinancePayload = nextFinance;
+        setItems(nextFinance);
 
         if (staffRes.ok) {
-          setStaffItems((await staffRes.json()) as ApiStaffItem[]);
+          const nextStaff = (await staffRes.json()) as ApiStaffItem[];
+          cachedStaffPayload = nextStaff;
+          setStaffItems(nextStaff);
         }
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        if (!cachedFinancePayload) {
+          setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
+        }
       } finally {
         setLoading(false);
       }
@@ -224,11 +235,6 @@ export default function FinancePage() {
 
     void loadItems();
   }, []);
-
-  useEffect(() => {
-    if (type !== 'Lương') return;
-    void loadStaffItems();
-  }, [type]);
 
   useEffect(() => {
     if (!editingId || form.type !== 'Lương') return;

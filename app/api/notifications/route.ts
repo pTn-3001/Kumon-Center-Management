@@ -10,6 +10,29 @@ import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 
+const REMINDER_CHECK_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+let lastReminderCheckAt = 0;
+let reminderCheckInFlight: Promise<void> | null = null;
+
+function triggerBackgroundReminderCheck(centerId: number) {
+  const now = Date.now();
+  if (now - lastReminderCheckAt < REMINDER_CHECK_INTERVAL_MS || reminderCheckInFlight) {
+    return;
+  }
+  lastReminderCheckAt = now;
+  reminderCheckInFlight = Promise.all([
+    ensureAppointmentReminderNotifications(centerId),
+    ensurePreClassAttendanceReminderNotifications(centerId),
+  ])
+    .then(() => undefined)
+    .catch((err) => {
+      console.error('Background notification check error:', err);
+    })
+    .finally(() => {
+      reminderCheckInFlight = null;
+    });
+}
+
 function hasNotificationModel() {
   return Boolean((prisma as any).notification) && Boolean((prisma as any).notificationRead);
 }
@@ -20,8 +43,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
   }
 
-  await ensureAppointmentReminderNotifications(DEFAULT_CENTER_ID);
-  await ensurePreClassAttendanceReminderNotifications(DEFAULT_CENTER_ID);
+  triggerBackgroundReminderCheck(DEFAULT_CENTER_ID);
 
   if (!hasNotificationModel()) {
     return NextResponse.json({ unreadCount: 0, items: [] });
@@ -38,6 +60,7 @@ export async function GET(request: NextRequest) {
       ],
     },
     orderBy: { createdAt: 'desc' },
+    take: 100,
     include: {
       reads: {
         where: { staffId: session.id },
@@ -82,7 +105,12 @@ export async function PATCH(request: NextRequest) {
         { targetRoles: { isEmpty: true } },
         { targetRoles: { has: roleCode } },
       ],
+      reads: {
+        none: { staffId: session.id },
+      },
     },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
     select: { id: true },
   });
 

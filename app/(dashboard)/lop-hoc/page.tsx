@@ -201,13 +201,15 @@ function toTimeInputValue(value: Date) {
   return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`;
 }
 
+let cachedClassPayload: ClassPayload | null = null;
+
 function ClassPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const selectedStudentFromQuery = searchParams.get('studentId');
-  const [data, setData] = useState<ClassPayload>({ classGroups: [], students: [], staff: [], attendance: [], extraClassStudents: [] });
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<ClassPayload>(() => cachedClassPayload ?? { classGroups: [], students: [], staff: [], attendance: [], extraClassStudents: [] });
+  const [loading, setLoading] = useState(() => cachedClassPayload === null);
   const [error, setError] = useState('');
   const [selectedClass, setSelectedClass] = useState<{ subjectCode: SubjectCode; weekday: Weekday } | null>(null);
   const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().slice(0, 10));
@@ -262,10 +264,16 @@ function ClassPageContent() {
     if (!response.ok) {
       throw new Error('Không thể tải dữ liệu lớp học');
     }
-    return (await response.json()) as ClassPayload;
+    const payload = (await response.json()) as ClassPayload;
+    cachedClassPayload = payload;
+    return payload;
   }, []);
 
   useEffect(() => {
+    if (currentTab === 'chuyen-can') {
+      setLoading(false);
+      return;
+    }
     let isCancelled = false;
     const loadData = async () => {
       try {
@@ -275,7 +283,7 @@ function ClassPageContent() {
           setSelectedClass((prev) => prev || { subjectCode: 'MATH', weekday: defaultMathWeekday });
         }
       } catch (loadError) {
-        if (!isCancelled) {
+        if (!isCancelled && !cachedClassPayload) {
           setError(loadError instanceof Error ? loadError.message : 'Có lỗi xảy ra');
         }
       } finally {
@@ -289,7 +297,7 @@ function ClassPageContent() {
     return () => {
       isCancelled = true;
     };
-  }, [activeFetchDate, defaultMathWeekday, fetchClassData]);
+  }, [activeFetchDate, currentTab, defaultMathWeekday, fetchClassData]);
 
   useEffect(() => {
     if (!selectedClass) {
