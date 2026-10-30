@@ -10,7 +10,7 @@ RUN npm config set fetch-retries 5 && \
     npm config set fetch-retry-mintimeout 20000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
     npm config set fetch-timeout 300000 && \
-    (npm ci --legacy-peer-deps --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund)
+    (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)
 COPY . .
 RUN npx prisma generate
 RUN npm run build
