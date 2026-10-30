@@ -29,7 +29,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://postgres:30012004@db:5432/kumon_management_local_2026
+      DATABASE_URL: postgresql://postgres:30012004@db:5432/kumon_management_local_2026?connection_limit=30&pool_timeout=30
       TZ: Asia/Ho_Chi_Minh
     volumes:
       - ./docker-data/temp:/app/temp

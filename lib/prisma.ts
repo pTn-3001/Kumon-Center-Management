@@ -1,11 +1,14 @@
-const { PrismaClient } = require('@prisma/client') as { PrismaClient: new (...args: any[]) => any };
+import { PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
-  prisma?: any;
+  prisma?: PrismaClient;
 };
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
+  });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
-}
+// Always retain prisma client singleton in globalThis to avoid exhausting connection pool
+globalForPrisma.prisma = prisma;
